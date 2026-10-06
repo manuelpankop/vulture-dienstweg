@@ -110,28 +110,38 @@ impl<L: Label> Journey<L> {
             // typical case of one neighbour on the route this is
             // unambiguous.
             let serving_here = tt.get_routes_serving_stop(current_stop);
-            let (board, board_pos, walk_time) =
-                if let Some(&(_, pos)) = serving_here.iter().find(|(r, _)| *r == route) {
-                    (current_stop, pos, Duration::ZERO)
-                } else {
-                    let mut found = None;
-                    for &neighbour in tt.get_footpaths_from(current_stop) {
-                        if let Some(&(_, pos)) = tt
-                            .get_routes_serving_stop(neighbour)
-                            .iter()
-                            .find(|(r, _)| *r == route)
-                        {
-                            let walk = tt.get_transfer_time(current_stop, neighbour);
-                            found = Some((neighbour, pos, walk));
-                            break;
-                        }
+            // A boarding stop is only valid when the alighting stop still follows it on the
+            // route; a neighbour that is itself the alighting stop would give a zero-length leg.
+            let alights_after = |pos: u32| {
+                tt.get_stops_after(route, pos)
+                    .iter()
+                    .skip(1)
+                    .any(|&s| s == alight)
+            };
+            let (board, board_pos, walk_time) = if let Some(&(_, pos)) = serving_here
+                .iter()
+                .find(|(r, p)| *r == route && alights_after(*p))
+            {
+                (current_stop, pos, Duration::ZERO)
+            } else {
+                let mut found = None;
+                for &neighbour in tt.get_footpaths_from(current_stop) {
+                    if let Some(&(_, pos)) = tt
+                        .get_routes_serving_stop(neighbour)
+                        .iter()
+                        .find(|(r, p)| *r == route && alights_after(*p))
+                    {
+                        let walk = tt.get_transfer_time(current_stop, neighbour);
+                        found = Some((neighbour, pos, walk));
+                        break;
                     }
-                    found.ok_or(TimingError::NoBoardingStop {
-                        leg,
-                        route,
-                        from_stop: current_stop,
-                    })?
-                };
+                }
+                found.ok_or(TimingError::NoBoardingStop {
+                    leg,
+                    route,
+                    from_stop: current_stop,
+                })?
+            };
 
             current_time = current_time + walk_time;
 
@@ -152,14 +162,17 @@ impl<L: Label> Journey<L> {
 
             // Find the alight position by scanning forward from board_pos.
             let stops_ahead = tt.get_stops_after(route, board_pos);
-            let alight_offset = stops_ahead.iter().position(|&s| s == alight).ok_or(
-                TimingError::UnreachableAlight {
+            let alight_offset = stops_ahead
+                .iter()
+                .skip(1)
+                .position(|&s| s == alight)
+                .map(|offset| offset + 1)
+                .ok_or(TimingError::UnreachableAlight {
                     leg,
                     route,
                     board_pos,
                     alight,
-                },
-            )?;
+                })?;
             let alight_pos = board_pos + alight_offset as u32;
             let arrive = tt.get_arrival_time(trip, alight_pos);
 

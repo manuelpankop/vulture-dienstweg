@@ -561,6 +561,8 @@ pub struct GtfsTimetable {
     /// `drop_off_type = 1` (NotAvailable). Same shape as `no_pickup`.
     no_drop_off: HashSet<(TripIdx, u32)>,
     constrained_transfers: ConstrainedTransferIndex,
+    /// Minimum time for a trip-to-trip transfer at one stop when no GTFS rule applies.
+    default_same_stop_transfer: Option<Duration>,
 
     /// Trips with `wheelchair_accessible = NotAvailable`. Sparse —
     /// most feeds either populate the flag rarely or not at all.
@@ -950,6 +952,7 @@ impl GtfsTimetable {
             footpaths_for_stops,
             transfer_times,
             constrained_transfers: ConstrainedTransferIndex::new(stop_count),
+            default_same_stop_transfer: None,
             transfers_closed: false,
             station_children,
             no_pickup,
@@ -1126,6 +1129,13 @@ impl GtfsTimetable {
         for transfer in transfers {
             self.constrained_transfers.insert(transfer);
         }
+        self
+    }
+
+    /// Sets the minimum time for changing between trips at the same stop when no
+    /// GTFS transfer rule covers the change.
+    pub fn with_default_same_stop_transfer(mut self, minimum: Duration) -> Self {
+        self.default_same_stop_transfer = Some(minimum);
         self
     }
 
@@ -1490,6 +1500,12 @@ impl Timetable for GtfsTimetable {
                         .unwrap_or(previous_trip.arrival);
                     self.get_departure_time(trip, pos) >= at.max(minimum_ready_time)
                 }
+                None => match self.default_same_stop_transfer {
+                    Some(minimum) if previous_trip.alight_stop == to_stop => {
+                        self.get_departure_time(trip, pos) >= at.max(previous_trip.arrival + minimum)
+                    }
+                    _ => true,
+                },
                 _ => true,
                 }
             };
