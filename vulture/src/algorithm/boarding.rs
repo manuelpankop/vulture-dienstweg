@@ -31,6 +31,7 @@ pub(crate) enum Step {
     Boarded {
         from: StopIdx,
         route: RouteIdx,
+        trip: crate::TripIdx,
         parent_arrival: SecondOfDay,
     },
     Walked {
@@ -71,12 +72,13 @@ pub(crate) fn reconstruct_journey(
     pt: StopIdx,
     target_arrival: SecondOfDay,
     k: K,
-) -> Option<(StopIdx, Vec<(RouteIdx, StopIdx)>)> {
+) -> Option<(StopIdx, Vec<(RouteIdx, StopIdx)>, Vec<crate::TripIdx>)> {
     if tree.is_empty() {
         return None;
     }
 
     let mut plan = Vec::with_capacity(k);
+    let mut trips = Vec::with_capacity(k);
     let mut parent = pt;
     let mut parent_arrival = target_arrival;
     let mut inner_k = k;
@@ -102,9 +104,11 @@ pub(crate) fn reconstruct_journey(
             Step::Boarded {
                 from,
                 route,
+                trip,
                 parent_arrival: pa,
             } => {
                 plan.push((route, parent));
+                trips.push(trip);
                 parent = from;
                 parent_arrival = pa;
                 if inner_k == 0 {
@@ -129,7 +133,8 @@ pub(crate) fn reconstruct_journey(
 
     if !plan.is_empty() && origins.contains(parent.idx()) {
         plan.reverse();
-        Some((parent, plan))
+        trips.reverse();
+        Some((parent, plan, trips))
     } else {
         None
     }
@@ -160,7 +165,7 @@ pub(crate) fn extract_target_journeys<L: Label>(
                 if raw_arr == SecondOfDay::MAX {
                     continue;
                 }
-                let Some((origin, plan)) =
+                let Some((origin, plan, trips)) =
                     reconstruct_journey(board_detail, origin_set, target, raw_arr, k)
                 else {
                     continue;
@@ -178,6 +183,7 @@ pub(crate) fn extract_target_journeys<L: Label>(
                     target,
                     target_walk: walk,
                     plan,
+                    trips,
                     label,
                 });
             }

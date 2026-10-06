@@ -49,6 +49,8 @@ pub struct Journey<L: Label = ArrivalTime> {
     /// origin stop, and each subsequent step boards at the stop where the
     /// previous step got off (possibly via an intermediate footpath).
     pub plan: Vec<(RouteIdx, StopIdx)>,
+    /// Exact trip selected for each corresponding entry in `plan`.
+    pub trips: Vec<TripIdx>,
     /// The label at the target stop, with the target's walk-time offset
     /// already folded in. For [`ArrivalTime`], `label.arrival()` is the
     /// effective arrival time in seconds since midnight.
@@ -133,15 +135,20 @@ impl<L: Label> Journey<L> {
 
             current_time = current_time + walk_time;
 
-            let trip = tt.get_earliest_trip(route, current_time, board_pos).ok_or(
-                TimingError::NoCatchableTrip {
+            let trip = self
+                .trips
+                .get(leg)
+                .copied()
+                .ok_or(TimingError::MissingSelectedTrip { leg })?;
+            let depart = tt.get_departure_time(trip, board_pos);
+            if depart < current_time {
+                return Err(TimingError::NoCatchableTrip {
                     leg,
                     route,
                     board_pos,
                     at: current_time,
-                },
-            )?;
-            let depart = tt.get_departure_time(trip, board_pos);
+                });
+            }
 
             // Find the alight position by scanning forward from board_pos.
             let stops_ahead = tt.get_stops_after(route, board_pos);
@@ -204,6 +211,12 @@ pub struct TimedLeg {
 #[non_exhaustive]
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum TimingError {
+    /// The reconstructed plan has no selected trip at this leg position.
+    #[error("leg {leg}: journey has no selected trip")]
+    MissingSelectedTrip {
+        /// Zero-based plan index with missing trip metadata.
+        leg: usize,
+    },
     /// No stop in the plan-reconstruction frontier (the previous leg's
     /// alight stop or any of its one-hop footpath neighbours) is served
     /// by the route this leg wants to board. Multi-hop walk chains are

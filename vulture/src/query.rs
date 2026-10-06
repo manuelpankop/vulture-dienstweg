@@ -8,7 +8,7 @@ use crate::Timetable;
 use crate::algorithm::per_call::run_per_call_query;
 #[cfg(feature = "parallel")]
 use crate::algorithm::range::filter_range_pareto_front;
-use crate::algorithm::range::raptor_range_rrap_arrival;
+use crate::algorithm::range::raptor_range_rrap;
 use crate::cache::RaptorCache;
 #[cfg(feature = "parallel")]
 use crate::cache::RaptorCachePool;
@@ -284,17 +284,18 @@ where
     }
 }
 
-// ----- Stage 2b: RangeDeparture, ArrivalTime – rRAPTOR -----
+// ----- Stage 2b: RangeDeparture – rRAPTOR -----
 
-impl<'tt, T> Query<'tt, T, ArrivalTime, RangeDeparture>
+impl<'tt, T, L> Query<'tt, T, L, RangeDeparture>
 where
     T: Timetable + Sized,
+    L: Label,
 {
     /// Execute the range query, allocating a fresh [`RaptorCache`].
     /// Runs rRAPTOR (single reverse-chronological scan reusing labels
     /// across departures).
-    pub fn run(self) -> Vec<RangeJourney<ArrivalTime>> {
-        let mut cache = RaptorCache::<ArrivalTime>::for_timetable(self.tt);
+    pub fn run(self) -> Vec<RangeJourney<L>> {
+        let mut cache = RaptorCache::<L>::for_timetable(self.tt);
         self.run_with_cache(&mut cache)
     }
 
@@ -304,12 +305,10 @@ where
     ///
     /// Panics if `cache` was sized for a different timetable. See
     /// [`RaptorCache::for_timetable`].
-    pub fn run_with_cache(
-        self,
-        cache: &mut RaptorCache<ArrivalTime>,
-    ) -> Vec<RangeJourney<ArrivalTime>> {
-        raptor_range_rrap_arrival(
+    pub fn run_with_cache(self, cache: &mut RaptorCache<L>) -> Vec<RangeJourney<L>> {
+        raptor_range_rrap(
             self.tt,
+            &self.ctx,
             cache,
             self.max_transfers.0 as usize,
             &self.mode.departures,

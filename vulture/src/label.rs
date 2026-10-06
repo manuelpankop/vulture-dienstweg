@@ -10,7 +10,7 @@ use crate::time::SecondOfDay;
 /// Per-trip context passed to [`Label::extend_by_trip`]. Single-criterion
 /// labels read only `arrival`; multi-criterion impls (fare-aware,
 /// route-preference, transfer-penalty) draw on the remaining fields.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TripContext {
     /// The trip the rider is alighting from.
     pub trip: TripIdx,
@@ -198,6 +198,12 @@ pub trait Label: Copy + std::fmt::Debug {
     /// algorithm for target-threshold comparisons and by [`Journey`](crate::Journey)
     /// output. Always returns [`SecondOfDay::MAX`] for [`Label::UNREACHED`].
     fn arrival(&self) -> SecondOfDay;
+
+    /// Transfer context for the transit trip that produced this label.
+    /// Labels which don't model transfer constraints can keep the default.
+    fn transfer_context(&self) -> Option<TripContext> {
+        None
+    }
 }
 
 /// Single-criterion label = arrival time at a stop. Default `L`

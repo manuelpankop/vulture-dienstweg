@@ -221,6 +221,7 @@ pub(crate) fn run_raptor_rounds<T: Timetable + ?Sized, L: Label>(
                             Step::Boarded {
                                 from: boarding_stop,
                                 route,
+                                trip,
                                 parent_arrival: boarding_label.arrival(),
                             },
                         );
@@ -241,11 +242,12 @@ pub(crate) fn run_raptor_rounds<T: Timetable + ?Sized, L: Label>(
                 let cand_bag = &labels[k - 1][pi.idx()];
                 for candidate in cand_bag.iter() {
                     let cand_arr = candidate.arrival();
-                    let trip = match tt.earliest_accessible_trip(
+                    let trip = match tt.earliest_transfer_aware_trip(
                         route,
                         cand_arr,
                         pos,
                         require_wheelchair_accessible,
+                        candidate.transfer_context(),
                     ) {
                         Some(t) => t,
                         None => continue,

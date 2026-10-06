@@ -505,17 +505,19 @@ fn range_query_matches_reference(tc: hegel::TestCase) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vulture::{ArrivalTime, Journey, RouteIdx, StopIdx};
+    use vulture::{ArrivalTime, Journey, RouteIdx, StopIdx, TripIdx};
 
     fn j(arrival: u32, plan: Vec<(u32, u32)>) -> Journey {
+        let plan: Vec<_> = plan
+            .into_iter()
+            .map(|(route, stop)| (RouteIdx::new(route), StopIdx::new(stop)))
+            .collect();
         Journey {
             origin: StopIdx::new(0),
             target: StopIdx::new(0),
             target_walk: Duration::ZERO,
-            plan: plan
-                .into_iter()
-                .map(|(r, s)| (RouteIdx::new(r), StopIdx::new(s)))
-                .collect(),
+            trips: vec![TripIdx::new(0); plan.len()],
+            plan,
             label: ArrivalTime(SecondOfDay(arrival)),
         }
     }

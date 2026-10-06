@@ -13,7 +13,6 @@ use crate::algorithm::boarding::extract_target_journeys;
 use crate::algorithm::per_call::run_raptor_rounds;
 use crate::endpoints::Endpoints;
 use crate::ids::RouteIdx;
-use crate::label::ArrivalTime;
 use crate::label::Label;
 use crate::time::SecondOfDay;
 
@@ -131,18 +130,16 @@ pub(crate) fn newly_active_stops_into<T: Timetable + ?Sized>(
 /// `best_arrival` is never cleared. This gives the `pt_threshold`
 /// pruning a tight bound across τ scans.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn raptor_range_rrap_arrival<T: Timetable + ?Sized>(
+pub(crate) fn raptor_range_rrap<T: Timetable + ?Sized, L: Label>(
     tt: &T,
-    cache: &mut RaptorCache<ArrivalTime>,
+    ctx: &L::Ctx,
+    cache: &mut RaptorCache<L>,
     transfers: usize,
     departures: &[SecondOfDay],
     origins: Endpoints,
     targets: Endpoints,
     require_wheelchair_accessible: bool,
-) -> Vec<RangeJourney<ArrivalTime>> {
-    // ArrivalTime's Ctx is `()`; the serial rRAPTOR specialisation
-    // doesn't expose ctx in its public signature.
-    let ctx: &<ArrivalTime as Label>::Ctx = &();
+) -> Vec<RangeJourney<L>> {
     let origins = origins.as_slice();
     let targets = targets.as_slice();
 
@@ -167,7 +164,7 @@ pub(crate) fn raptor_range_rrap_arrival<T: Timetable + ?Sized>(
         origin_set.insert(source.idx());
     }
 
-    let mut output: Vec<RangeJourney<ArrivalTime>> = Vec::new();
+    let mut output: Vec<RangeJourney<L>> = Vec::new();
     let mut prev_tau: Option<SecondOfDay> = None;
 
     for &tau in departures {
@@ -178,7 +175,7 @@ pub(crate) fn raptor_range_rrap_arrival<T: Timetable + ?Sized>(
         // there's nothing to dominate and the seed is added directly.
         marked_stops.clear();
         for &(source, walk) in origins {
-            let seed = ArrivalTime(tau + walk);
+            let seed = L::from_departure(ctx, tau + walk);
             if labels[0][source.idx()].insert(seed) {
                 best_arrival[source.idx()].insert(seed);
                 marked_stops.insert(source.idx());

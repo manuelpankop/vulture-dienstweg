@@ -214,6 +214,21 @@ pub trait Timetable {
         }
     }
 
+    /// Finds the earliest trip which can be boarded after `previous_trip`.
+    /// Adapters with constrained GTFS transfers can use the previous leg
+    /// context to skip otherwise catchable but forbidden trips.
+    fn earliest_transfer_aware_trip(
+        &self,
+        route: RouteIdx,
+        at: SecondOfDay,
+        pos: u32,
+        require_wheelchair_accessible: bool,
+        previous_trip: Option<crate::TripContext>,
+    ) -> Option<TripIdx> {
+        let _ = previous_trip;
+        self.earliest_accessible_trip(route, at, pos, require_wheelchair_accessible)
+    }
+
     /// Returns all stops directly reachable from the given stop via
     /// walking (footpaths).
     ///

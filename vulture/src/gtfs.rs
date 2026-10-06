@@ -43,7 +43,7 @@ use jiff::civil::Date;
 use rstar::{AABB, PointDistance, RTree, RTreeObject};
 use smallvec::SmallVec;
 
-use crate::{Duration, RouteIdx, SecondOfDay, StopIdx, Timetable, TripIdx};
+use crate::{Duration, RouteIdx, SecondOfDay, StopIdx, Timetable, TripContext, TripIdx};
 
 /// Mean Earth radius in metres, used to project stop coordinates to a
 /// local Cartesian frame for the `with_walking_footpaths` spatial query.
@@ -396,6 +396,83 @@ impl FeedFeatures {
     }
 }
 
+/// GTFS transfer type used by [`ConstrainedTransfer`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConstrainedTransferType {
+    /// Recommended interchange; the scheduled timetable determines feasibility.
+    Recommended,
+    /// Timed interchange; the scheduled timetable determines feasibility.
+    Timed,
+    /// A minimum connection time is required.
+    MinimumTime,
+    /// This arriving/departing trip pair may not be used.
+    Impossible,
+    /// The passenger remains on board across linked trips.
+    StaySeated,
+    /// The passenger must alight and board the linked trip again.
+    MustAlight,
+}
+
+/// A transfer rule scoped to one or both trips/routes, plus its stop pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConstrainedTransfer {
+    /// Stop where the arriving trip reaches the transfer point.
+    pub from_stop: Option<StopIdx>,
+    /// Stop where the departing trip leaves the transfer point.
+    pub to_stop: Option<StopIdx>,
+    /// Restrict the arriving service to this route when present.
+    pub from_route: Option<RouteIdx>,
+    /// Restrict the departing service to this route when present.
+    pub to_route: Option<RouteIdx>,
+    /// Restrict the arriving service to this trip when present.
+    pub from_trip: Option<TripIdx>,
+    /// Restrict the departing service to this trip when present.
+    pub to_trip: Option<TripIdx>,
+    /// GTFS transfer semantics for this ordered connection.
+    pub transfer_type: ConstrainedTransferType,
+    /// Minimum elapsed time required for a type-2 connection.
+    pub min_transfer_time: Option<Duration>,
+}
+
+#[derive(Debug, Default)]
+struct ConstrainedTransferIndex {
+    by_from_stop: Vec<Vec<ConstrainedTransfer>>,
+    by_from_route: HashMap<RouteIdx, Vec<ConstrainedTransfer>>,
+    by_from_trip: HashMap<TripIdx, Vec<ConstrainedTransfer>>,
+    any_from: Vec<ConstrainedTransfer>,
+}
+
+impl ConstrainedTransferIndex {
+    fn new(n_stops: usize) -> Self {
+        Self {
+            by_from_stop: vec![Vec::new(); n_stops],
+            ..Self::default()
+        }
+    }
+
+    fn insert(&mut self, rule: ConstrainedTransfer) {
+        if let Some(trip) = rule.from_trip {
+            self.by_from_trip.entry(trip).or_default().push(rule);
+        } else if let Some(route) = rule.from_route {
+            self.by_from_route.entry(route).or_default().push(rule);
+        } else if let Some(stop) = rule.from_stop {
+            self.by_from_stop[stop.idx()].push(rule);
+        } else {
+            self.any_from.push(rule);
+        }
+    }
+
+    fn candidates(&self, previous: TripContext) -> impl Iterator<Item = &ConstrainedTransfer> {
+        self.by_from_trip
+            .get(&previous.trip)
+            .into_iter()
+            .flatten()
+            .chain(self.by_from_route.get(&previous.route).into_iter().flatten())
+            .chain(self.by_from_stop[previous.alight_stop.idx()].iter())
+            .chain(self.any_from.iter())
+    }
+}
+
 /// A [`Timetable`] implementation that wraps a parsed GTFS feed.
 ///
 /// Constructed via [`GtfsTimetable::new`], which validates the feed,
@@ -483,6 +560,7 @@ pub struct GtfsTimetable {
     /// `(trip, pos)` pairs where alighting is forbidden by GTFS
     /// `drop_off_type = 1` (NotAvailable). Same shape as `no_pickup`.
     no_drop_off: HashSet<(TripIdx, u32)>,
+    constrained_transfers: ConstrainedTransferIndex,
 
     /// Trips with `wheelchair_accessible = NotAvailable`. Sparse —
     /// most feeds either populate the flag rarely or not at all.
@@ -853,6 +931,7 @@ impl GtfsTimetable {
                 n_trips_with_shapes += 1;
             }
         }
+        let stop_count = stop_ids.len();
 
         Ok(Self {
             stop_ids,
@@ -870,6 +949,7 @@ impl GtfsTimetable {
             route_for_trip,
             footpaths_for_stops,
             transfer_times,
+            constrained_transfers: ConstrainedTransferIndex::new(stop_count),
             transfers_closed: false,
             station_children,
             no_pickup,
@@ -1035,6 +1115,18 @@ impl GtfsTimetable {
     /// trips that survived calendar filtering at construction).
     pub fn n_trips(&self) -> usize {
         self.trip_ids.len()
+    }
+
+    /// Adds GTFS transfer rules scoped to trips and/or routes.
+    /// Stop-only transfers should remain in `transfers.txt` footpaths.
+    pub fn with_constrained_transfers(
+        mut self,
+        transfers: impl IntoIterator<Item = ConstrainedTransfer>,
+    ) -> Self {
+        for transfer in transfers {
+            self.constrained_transfers.insert(transfer);
+        }
+        self
     }
 
     /// Returns a [`FeedFeatures`] snapshot describing what's in this
@@ -1246,6 +1338,22 @@ fn overtakes(
     })
 }
 
+fn transfer_specificity(rule: &ConstrainedTransfer) -> u8 {
+    match (
+        rule.from_trip.is_some(),
+        rule.to_trip.is_some(),
+        rule.from_route.is_some(),
+        rule.to_route.is_some(),
+    ) {
+        (true, true, _, _) => 6,
+        (true, false, _, true) | (false, true, true, _) => 5,
+        (true, false, _, false) | (false, true, false, _) => 4,
+        (false, false, true, true) => 3,
+        (false, false, true, false) | (false, false, false, true) => 2,
+        (false, false, false, false) => 1,
+    }
+}
+
 impl Timetable for GtfsTimetable {
     fn n_stops(&self) -> usize {
         self.stop_ids.len()
@@ -1306,6 +1414,86 @@ impl Timetable for GtfsTimetable {
         while let Some(&trip) = trips.get(idx) {
             let pickup_ok = no_pickup_empty || !self.no_pickup.contains(&(trip, pos));
             if pickup_ok && !self.inaccessible_trips.contains(&trip) {
+                return Some(trip);
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    fn earliest_transfer_aware_trip(
+        &self,
+        route: RouteIdx,
+        at: SecondOfDay,
+        pos: u32,
+        require_wheelchair_accessible: bool,
+        previous_trip: Option<TripContext>,
+    ) -> Option<TripIdx> {
+        let Some(previous_trip) = previous_trip else {
+            return self.earliest_accessible_trip(route, at, pos, require_wheelchair_accessible);
+        };
+        let to_stop = self.stop_at(route, pos);
+        let trips = &self.trips_for_route[route.idx()];
+        let departures = &self.departure_times[route.idx()][pos as usize];
+        let mut idx = departures.partition_point(|&departure| departure < at);
+
+        while let Some(&trip) = trips.get(idx) {
+            let pickup_ok = self.no_pickup.is_empty() || !self.no_pickup.contains(&(trip, pos));
+            let accessible = !require_wheelchair_accessible || !self.inaccessible_trips.contains(&trip);
+            if !pickup_ok || !accessible {
+                idx += 1;
+                continue;
+            }
+
+            let mut best_rule: Option<&ConstrainedTransfer> = None;
+            let mut conflicting_rules = false;
+            for rule in self.constrained_transfers.candidates(previous_trip).filter(|rule| {
+                    rule.from_stop.is_none_or(|value| value == previous_trip.alight_stop)
+                        && rule.to_stop.is_none_or(|value| value == to_stop)
+                        && rule.from_trip.is_none_or(|value| value == previous_trip.trip)
+                        && rule.from_route.is_none_or(|value| value == previous_trip.route)
+                        && rule.to_trip.is_none_or(|value| value == trip)
+                        && rule.to_route.is_none_or(|value| value == route)
+                })
+            {
+                match best_rule {
+                    None => best_rule = Some(rule),
+                    Some(best) if transfer_specificity(rule) > transfer_specificity(best) => {
+                        best_rule = Some(rule);
+                        conflicting_rules = false;
+                    }
+                    Some(best)
+                        if transfer_specificity(rule) == transfer_specificity(best)
+                            && rule != best =>
+                    {
+                        conflicting_rules = true;
+                    }
+                    _ => {}
+                }
+            }
+
+            let allowed = if conflicting_rules {
+                false
+            } else {
+                match best_rule {
+                Some(rule) if rule.transfer_type == ConstrainedTransferType::Impossible => false,
+                Some(rule) if rule.transfer_type == ConstrainedTransferType::StaySeated => false,
+                Some(rule)
+                    if matches!(
+                        rule.transfer_type,
+                        ConstrainedTransferType::Timed | ConstrainedTransferType::MinimumTime
+                    ) =>
+                {
+                    let minimum_ready_time = rule
+                        .min_transfer_time
+                        .map(|minimum| previous_trip.arrival + minimum)
+                        .unwrap_or(previous_trip.arrival);
+                    self.get_departure_time(trip, pos) >= at.max(minimum_ready_time)
+                }
+                _ => true,
+                }
+            };
+            if allowed {
                 return Some(trip);
             }
             idx += 1;
