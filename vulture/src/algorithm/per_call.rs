@@ -4,6 +4,8 @@
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
+use std::collections::HashMap;
+use std::collections::HashSet;
 
 use fixedbitset::FixedBitSet;
 use smallvec::SmallVec;
@@ -24,6 +26,183 @@ use crate::journey::Journey;
 use crate::label::Label;
 use crate::time::Duration;
 use crate::time::SecondOfDay;
+
+type RidingEntry<L> = (L, TripIdx, StopIdx, u32, Option<usize>);
+
+struct RouteBag<L: Label> {
+    items: SmallVec<[RidingEntry<L>; 8]>,
+    index: Option<HashMap<u64, SmallVec<[usize; 1]>>>,
+    boarded_trips: HashSet<TripIdx>,
+}
+
+impl<L: Label> RouteBag<L> {
+    fn new() -> Self {
+        Self { items: SmallVec::new(), index: None, boarded_trips: HashSet::new() }
+    }
+}
+
+#[cfg(test)]
+mod route_bag_tests {
+    use super::*;
+    use crate::label::TripContext;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct TestLabel {
+        group: u32,
+        arrival: SecondOfDay,
+    }
+
+    impl Label for TestLabel {
+        type Ctx = ();
+        const UNREACHED: Self = Self { group: 0, arrival: SecondOfDay::MAX };
+        fn from_departure(_: &(), at: SecondOfDay) -> Self {
+            Self { group: 0, arrival: at }
+        }
+        fn extend_by_trip(self, _: &(), trip: TripContext) -> Self {
+            Self { arrival: trip.arrival, ..self }
+        }
+        fn extend_by_footpath(self, _: &(), _: StopIdx, _: StopIdx, walk: Duration) -> Self {
+            Self { arrival: self.arrival + walk, ..self }
+        }
+        fn dominates(&self, other: &Self) -> bool {
+            self.group == other.group && self.arrival <= other.arrival
+        }
+        fn dominance_partition(&self) -> Option<u64> {
+            Some(u64::from(self.group % 13))
+        }
+        fn arrival(&self) -> SecondOfDay {
+            self.arrival
+        }
+    }
+
+    #[test]
+    fn indexed_route_bag_matches_linear_algorithm() {
+        let mut bag = RouteBag::new();
+        let mut reference: Vec<RidingEntry<TestLabel>> = Vec::new();
+        for i in 0..2000 {
+            let label = TestLabel {
+                group: (i * 37 + i / 7) % 103,
+                arrival: SecondOfDay((i * 271 + i / 3) % 997),
+            };
+            let trip = TripIdx::new((i * 11) % 300);
+            let entry = (label, trip, StopIdx::new(i % 11), i, None);
+            let departure_of = |trip: TripIdx| SecondOfDay(trip.get());
+            let departure = departure_of(trip);
+            if !reference.iter().any(|(old, trip, _, _, _)| {
+                old.dominates(&label) && departure_of(*trip) <= departure
+            }) {
+                reference.retain(|(old, trip, _, _, _)| {
+                    !(label.dominates(old) && departure <= departure_of(*trip))
+                });
+                reference.push(entry);
+            }
+            bag.insert(entry, departure, departure_of);
+            assert_eq!(bag.items.as_slice(), reference);
+        }
+        bag.clear();
+        assert!(bag.items.is_empty());
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct SameTripLabel(u32);
+
+    impl Label for SameTripLabel {
+        type Ctx = ();
+        const UNREACHED: Self = Self(u32::MAX);
+        const SAME_TRIP_BOARDINGS_EQUIVALENT: bool = true;
+        fn from_departure(_: &(), _: SecondOfDay) -> Self { Self(0) }
+        fn extend_by_trip(self, _: &(), _: TripContext) -> Self { self }
+        fn extend_by_footpath(self, _: &(), _: StopIdx, _: StopIdx, _: Duration) -> Self { self }
+        fn arrival(&self) -> SecondOfDay { SecondOfDay(self.0) }
+    }
+
+    #[test]
+    fn equivalent_boardings_merge_only_the_exact_same_trip() {
+        let mut bag = RouteBag::new();
+        let trip_a = TripIdx::new(1);
+        let trip_b = TripIdx::new(2);
+        let departure_of = |_| SecondOfDay(100);
+        bag.insert((SameTripLabel(10), trip_a, StopIdx::new(1), 0, None), SecondOfDay(100), departure_of);
+        bag.insert((SameTripLabel(20), trip_a, StopIdx::new(2), 1, None), SecondOfDay(100), departure_of);
+        bag.insert((SameTripLabel(30), trip_b, StopIdx::new(2), 1, None), SecondOfDay(100), departure_of);
+        assert_eq!(bag.items.len(), 2);
+        assert_eq!(bag.items[0].0.0, 10);
+        assert_eq!(bag.items[1].1, trip_b);
+        bag.clear();
+        bag.insert((SameTripLabel(40), trip_a, StopIdx::new(1), 0, None), SecondOfDay(100), departure_of);
+        assert_eq!(bag.items.len(), 1);
+    }
+}
+
+impl<L: Label> RouteBag<L> {
+    fn clear(&mut self) {
+        self.items.clear();
+        self.index = None;
+        self.boarded_trips.clear();
+    }
+
+    fn rebuild_index(&mut self) {
+        let mut index: HashMap<u64, SmallVec<[usize; 1]>> = HashMap::new();
+        for (i, entry) in self.items.iter().enumerate() {
+            let key = entry.0.dominance_partition().expect("partitioned label must have a key");
+            index.entry(key).or_default().push(i);
+        }
+        self.index = Some(index);
+    }
+
+    fn insert(
+        &mut self,
+        entry: RidingEntry<L>,
+        departure: SecondOfDay,
+        departure_of: impl Fn(TripIdx) -> SecondOfDay,
+    ) {
+        if L::SAME_TRIP_BOARDINGS_EQUIVALENT {
+            if self.boarded_trips.insert(entry.1) {
+                self.items.push(entry);
+            }
+            return;
+        }
+        let candidate = entry.0;
+        if let (Some(key), Some(index)) = (candidate.dominance_partition(), &self.index) {
+            let bucket = index.get(&key);
+            if bucket.is_some_and(|indices| indices.iter().any(|&i| {
+                let (existing, trip, _, _, _) = self.items[i];
+                existing.dominates(&candidate) && departure_of(trip) <= departure
+            })) {
+                return;
+            }
+            let removes = bucket.is_some_and(|indices| indices.iter().any(|&i| {
+                let (existing, trip, _, _, _) = self.items[i];
+                candidate.dominates(&existing) && departure <= departure_of(trip)
+            }));
+            if removes {
+                self.items.retain(|(existing, trip, _, _, _)| {
+                    !(candidate.dominates(existing) && departure <= departure_of(*trip))
+                });
+                self.items.push(entry);
+                self.rebuild_index();
+            } else {
+                self.index.as_mut().expect("index exists")
+                    .entry(key).or_default().push(self.items.len());
+                self.items.push(entry);
+            }
+            return;
+        }
+
+        if self.items.iter().any(|(existing, trip, _, _, _)| {
+            existing.dominates(&candidate) && departure_of(*trip) <= departure
+        }) {
+            return;
+        }
+        self.items.retain(|(existing, trip, _, _, _)| {
+            !(candidate.dominates(existing) && departure <= departure_of(*trip))
+        });
+        self.items.push(entry);
+        if self.items.len() >= 32 && candidate.dominance_partition().is_some() {
+            self.rebuild_index();
+        }
+    }
+}
 
 // `earliest_accessible_trip` lives on the `Timetable` trait now so
 // adapters with direct access to per-route trip lists can walk by
@@ -115,6 +294,12 @@ pub(crate) fn run_raptor_rounds<T: Timetable + ?Sized, L: Label>(
     }
 
     for k in 1..=transfers {
+        #[cfg(feature = "profiling")]
+        let started = std::time::Instant::now();
+        #[cfg(feature = "profiling")]
+        let (mut routes_scanned, mut stops_scanned, mut candidates, mut alights, mut max_route_bag) = (0u64, 0u64, 0u64, 0u64, 0usize);
+        #[cfg(feature = "profiling")]
+        let (mut pruned_candidates, mut pruned_alights) = (0u64, 0u64);
         // Sparse carry-forward: only clone bags at stops ever
         // reached so far this query. For real feeds the reached
         // set is small (<10% of stops in typical city queries),
@@ -158,19 +343,28 @@ pub(crate) fn run_raptor_rounds<T: Timetable + ?Sized, L: Label>(
         // entries that boarded different trips. `board_pos` is
         // threaded through so labels with per-trip context (e.g. fares)
         // can know where the rider got on.
-        let mut route_bag: SmallVec<[(L, TripIdx, StopIdx, u32); 8]> = SmallVec::new();
+        let mut route_bag: RouteBag<L> = RouteBag::new();
 
         for &route in q_routes.iter() {
+            #[cfg(feature = "profiling")]
+            {
+                routes_scanned += 1;
+                if routes_scanned % 10_000 == 0 {
+                    eprintln!("raptor_progress round={k} ms={} routes={routes_scanned} candidates={candidates} alights={alights} max_route_bag={max_route_bag}", started.elapsed().as_millis());
+                }
+            }
             let p_pos = q_entry[route.idx()].expect("route in q_routes must have an entry");
             route_bag.clear();
 
             for (offset, &pi) in tt.get_stops_after(route, p_pos).iter().enumerate() {
+                #[cfg(feature = "profiling")]
+                { stops_scanned += 1; alights += route_bag.items.len() as u64; }
                 let pos = p_pos + offset as u32;
 
                 // 1. Alight every active riding entry at pi.
                 let stop_accessible_ok =
                     !require_wheelchair_accessible || tt.stop_wheelchair_accessible(pi);
-                for &(boarding_label, trip, boarding_stop, board_pos) in route_bag.iter() {
+                for &(boarding_label, trip, boarding_stop, board_pos, parent_node) in route_bag.items.iter() {
                     // Skip stops where this trip doesn't allow drop-off
                     // (GTFS drop_off_type = 1). The trip still passes
                     // through `pi`, but the rider cannot disembark, so
@@ -196,6 +390,11 @@ pub(crate) fn run_raptor_rounds<T: Timetable + ?Sized, L: Label>(
                             arrival: arr,
                         },
                     );
+                    if !new_label.can_reach_target(ctx, pi) {
+                        #[cfg(feature = "profiling")]
+                        { pruned_alights += 1; }
+                        continue;
+                    }
                     // Pareto-aware prune: skip when the bag at `pi`
                     // already weakly dominates `new_label`, or when every
                     // target slot's `best_arrival` bag does (the per-
@@ -216,15 +415,18 @@ pub(crate) fn run_raptor_rounds<T: Timetable + ?Sized, L: Label>(
                     }
                     if labels[k][pi.idx()].insert(new_label) {
                         best_arrival[pi.idx()].insert(new_label);
-                        board_detail.insert(
-                            (k, pi, new_label.arrival()),
+                        let node = board_detail.insert(
+                            parent_node,
+                            pi,
                             Step::Boarded {
                                 from: boarding_stop,
                                 route,
                                 trip,
-                                parent_arrival: boarding_label.arrival(),
+                                board_pos,
+                                alight_pos: pos,
                             },
                         );
+                        labels[k][pi.idx()].set_last_node(node);
                         marked_stops.insert(pi.idx());
                         ever_reached.insert(pi.idx());
                     }
@@ -240,7 +442,14 @@ pub(crate) fn run_raptor_rounds<T: Timetable + ?Sized, L: Label>(
                 //    self-time across `SmallVec::clear / triple_mut
                 //    / spilled` plus the `extend` traffic.)
                 let cand_bag = &labels[k - 1][pi.idx()];
-                for candidate in cand_bag.iter() {
+                for (candidate, parent_node) in cand_bag.iter_with_node() {
+                    if !candidate.can_reach_target(ctx, pi) {
+                        #[cfg(feature = "profiling")]
+                        { pruned_candidates += 1; }
+                        continue;
+                    }
+                    #[cfg(feature = "profiling")]
+                    { candidates += 1; }
                     let cand_arr = candidate.arrival();
                     let trip = match tt.earliest_transfer_aware_trip(
                         route,
@@ -254,27 +463,11 @@ pub(crate) fn run_raptor_rounds<T: Timetable + ?Sized, L: Label>(
                     };
                     let trip_dep = tt.get_departure_time(trip, pos);
 
-                    // Redundancy check: existing route_bag entry
-                    // dominates candidate AND boards an at-or-earlier
-                    // trip at pi → candidate is redundant.
-                    let mut redundant = false;
-                    for &(l_existing, t_existing, _, _) in route_bag.iter() {
-                        let existing_dep = tt.get_departure_time(t_existing, pos);
-                        if l_existing.dominates(candidate) && existing_dep <= trip_dep {
-                            redundant = true;
-                            break;
-                        }
-                    }
-                    if redundant {
-                        continue;
-                    }
-
-                    // Remove entries strictly dominated by candidate.
-                    route_bag.retain(|&mut (l_existing, t_existing, _, _)| {
-                        let existing_dep = tt.get_departure_time(t_existing, pos);
-                        !(candidate.dominates(&l_existing) && trip_dep <= existing_dep)
+                    route_bag.insert((candidate, trip, pi, pos, parent_node), trip_dep, |existing| {
+                        tt.get_departure_time(existing, pos)
                     });
-                    route_bag.push((*candidate, trip, pi, pos));
+                    #[cfg(feature = "profiling")]
+                    { max_route_bag = max_route_bag.max(route_bag.items.len()); }
                 }
             }
         }
@@ -284,6 +477,8 @@ pub(crate) fn run_raptor_rounds<T: Timetable + ?Sized, L: Label>(
             q_entry[r.idx()] = None;
         }
 
+        #[cfg(feature = "profiling")]
+        eprintln!("raptor_scan_complete round={k} ms={}", started.elapsed().as_millis());
         if footpaths_closed {
             relax_footpaths_round_closed(
                 tt,
@@ -316,6 +511,11 @@ pub(crate) fn run_raptor_rounds<T: Timetable + ?Sized, L: Label>(
             marked_stops.insert(s.idx());
         }
 
+        #[cfg(feature = "profiling")]
+        {
+            let (trips, rules) = crate::profiling::take_transfer_counts();
+            eprintln!("raptor round={k} ms={} routes={routes_scanned} stops={stops_scanned} candidates={candidates} alights={alights} pruned_candidates={pruned_candidates} pruned_alights={pruned_alights} max_route_bag={max_route_bag} transfer_trips={trips} transfer_rules={rules} reached={}", started.elapsed().as_millis(), ever_reached.count_ones(..));
+        }
         if marked_stops.is_clear() {
             break;
         }

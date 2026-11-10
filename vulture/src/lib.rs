@@ -152,6 +152,9 @@ mod query;
 mod time;
 mod timetable;
 
+#[cfg(feature = "profiling")]
+mod profiling;
+
 pub mod ffi;
 pub mod gtfs;
 pub mod labels;
@@ -167,6 +170,7 @@ pub use query::Query;
 pub use query::RangeJourney;
 
 pub use journey::Journey;
+pub use journey::JourneyStep;
 pub use journey::TimedLeg;
 pub use journey::TimingError;
 

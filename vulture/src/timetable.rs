@@ -5,6 +5,7 @@
 
 use std::marker::PhantomData;
 
+use fixedbitset::FixedBitSet;
 use crate::NeedsDeparture;
 use crate::Query;
 use crate::endpoints::Endpoints;
@@ -100,6 +101,31 @@ pub trait Timetable {
     /// Returns the departure time of a trip at the given position within its
     /// route's sequence.
     fn get_departure_time(&self, trip: TripIdx, pos: u32) -> SecondOfDay;
+
+    /// Marks stops with boardable departures in the half-open interval `[lo, hi)`.
+    /// Implementations may use an index, but must preserve accessibility filtering.
+    fn mark_newly_active_stops(
+        &self,
+        lo: SecondOfDay,
+        hi: SecondOfDay,
+        marked: &mut FixedBitSet,
+        require_wheelchair_accessible: bool,
+    ) {
+        if lo >= hi {
+            return;
+        }
+        for r in 0..self.n_routes() as u32 {
+            let route = RouteIdx::new(r);
+            for (pos, &stop) in self.get_stops_after(route, 0).iter().enumerate() {
+                if let Some(trip) = self.earliest_accessible_trip(
+                    route, lo, pos as u32, require_wheelchair_accessible,
+                ) && self.get_departure_time(trip, pos as u32) < hi
+                {
+                    marked.insert(stop.idx());
+                }
+            }
+        }
+    }
 
     /// Reports whether a passenger can *board* `trip` at the stop at
     /// `pos` along its route's sequence.

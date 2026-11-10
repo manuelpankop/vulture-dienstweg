@@ -473,6 +473,46 @@ impl ConstrainedTransferIndex {
     }
 }
 
+/// A directed, optimistic travel-time graph for one prepared timetable.
+///
+/// The graph ignores schedules and boarding restrictions. Its distances are
+/// lower bounds, not travel times of necessarily feasible journeys.
+pub struct TravelTimeLowerBoundGraph {
+    incoming: Vec<Vec<(StopIdx, u32)>>,
+}
+
+impl TravelTimeLowerBoundGraph {
+    /// Minimum optimistic seconds from every stop to any target, including
+    /// its final walk. Unreachable stops are represented by `u32::MAX`.
+    pub fn to_targets(&self, targets: &[(StopIdx, Duration)]) -> Vec<u32> {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+
+        let mut distances = vec![u32::MAX; self.incoming.len()];
+        let mut queue = BinaryHeap::new();
+        for &(stop, walk) in targets {
+            let distance = walk.as_secs();
+            if distance < distances[stop.idx()] {
+                distances[stop.idx()] = distance;
+                queue.push(Reverse((distance, stop)));
+            }
+        }
+        while let Some(Reverse((distance, stop))) = queue.pop() {
+            if distances[stop.idx()] != distance {
+                continue;
+            }
+            for &(previous, weight) in &self.incoming[stop.idx()] {
+                let candidate = distance.saturating_add(weight);
+                if candidate < distances[previous.idx()] {
+                    distances[previous.idx()] = candidate;
+                    queue.push(Reverse((candidate, previous)));
+                }
+            }
+        }
+        distances
+    }
+}
+
 /// A [`Timetable`] implementation that wraps a parsed GTFS feed.
 ///
 /// Constructed via [`GtfsTimetable::new`], which validates the feed,
@@ -547,6 +587,8 @@ pub struct GtfsTimetable {
     arrival_times: Vec<Vec<Vec<SecondOfDay>>>,
     /// departure_times[route.idx()][stop_pos][trip_pos] = SecondOfDay
     departure_times: Vec<Vec<Vec<SecondOfDay>>>,
+    /// Boardable departures sorted by time, stop and accessibility.
+    departure_events: Vec<(SecondOfDay, StopIdx, bool)>,
     /// route_for_trip[trip.idx()] = (route_idx, position-within-route)
     route_for_trip: Vec<(RouteIdx, usize)>,
 
@@ -595,6 +637,58 @@ pub struct GtfsTimetable {
 }
 
 impl GtfsTimetable {
+    /// Build a lower-bound graph from every trip segment and walking edge in
+    /// this timetable. Call this after configuring the timetable's footpaths.
+    ///
+    /// Combining minima from different trips and ignoring dwell, waiting and
+    /// transfer restrictions can only make the resulting distances shorter.
+    /// Returns an error when trip times are not chronological, since in that
+    /// case nonnegative graph weights cannot safely bound the routing result.
+    pub fn travel_time_lower_bound_graph(&self) -> Result<TravelTimeLowerBoundGraph, &'static str> {
+        let mut incoming = vec![Vec::new(); self.n_stops()];
+        for (route, stops) in self.stops_for_route.iter().enumerate() {
+            for (pos, pair) in stops.windows(2).enumerate() {
+                let arrivals_here = &self.arrival_times[route][pos];
+                let departures = &self.departure_times[route][pos];
+                let arrivals_next = &self.arrival_times[route][pos + 1];
+                let departures_next = &self.departure_times[route][pos + 1];
+                let mut minimum = u32::MAX;
+                for (((&here, &departure), &next), &next_departure) in
+                    arrivals_here.iter().zip(departures).zip(arrivals_next).zip(departures_next)
+                {
+                    if (here != SecondOfDay::MAX && here > departure)
+                        || next_departure < departure
+                        || (next != SecondOfDay::MAX && (next < departure || next > next_departure))
+                    {
+                        return Err("trip stop times are not chronological");
+                    }
+                    let start = here.as_secs().max(departure.as_secs());
+                    let end = next.as_secs();
+                    let duration = if start == u32::MAX || end == u32::MAX {
+                        0
+                    } else {
+                        end.saturating_sub(start)
+                    };
+                    minimum = minimum.min(duration);
+                }
+                if minimum != u32::MAX {
+                    incoming[pair[1].idx()].push((pair[0], minimum));
+                }
+            }
+        }
+        for from in 0..self.n_stops() {
+            let stop = StopIdx::new(from as u32);
+            for &to in self.get_footpaths_from(stop) {
+                incoming[to.idx()].push((stop, self.get_transfer_time(stop, to).as_secs()));
+            }
+        }
+        for edges in &mut incoming {
+            edges.sort_unstable();
+            edges.dedup_by_key(|edge| edge.0);
+        }
+        Ok(TravelTimeLowerBoundGraph { incoming })
+    }
+
     /// Creates a single-day timetable from a parsed GTFS feed for a
     /// specific service date.
     ///
@@ -754,6 +848,7 @@ impl GtfsTimetable {
         let mut trips_for_route: Vec<Vec<TripIdx>> = Vec::new();
         let mut arrival_times: Vec<Vec<Vec<SecondOfDay>>> = Vec::new();
         let mut departure_times: Vec<Vec<Vec<SecondOfDay>>> = Vec::new();
+        let mut departure_events = Vec::new();
         let mut route_for_trip: Vec<(RouteIdx, usize)> = Vec::with_capacity(gtfs.trips.len());
         let mut no_pickup: HashSet<(TripIdx, u32)> = HashSet::new();
         let mut no_drop_off: HashSet<(TripIdx, u32)> = HashSet::new();
@@ -834,6 +929,12 @@ impl GtfsTimetable {
                         dep_table[stop_pos][trip_pos] = shift_dep(d, *day_offset);
                         if matches!(st.pickup_type, PickupDropOffType::NotAvailable) {
                             no_pickup.insert((trip_idx, stop_pos as u32));
+                        } else {
+                            departure_events.push((
+                                dep_table[stop_pos][trip_pos],
+                                stop_seq[stop_pos],
+                                !matches!(trip.wheelchair_accessible, Availability::NotAvailable),
+                            ));
                         }
                         if matches!(st.drop_off_type, PickupDropOffType::NotAvailable) {
                             no_drop_off.insert((trip_idx, stop_pos as u32));
@@ -933,6 +1034,8 @@ impl GtfsTimetable {
                 n_trips_with_shapes += 1;
             }
         }
+        departure_events.sort_unstable();
+        departure_events.dedup();
         let stop_count = stop_ids.len();
 
         Ok(Self {
@@ -948,6 +1051,7 @@ impl GtfsTimetable {
             trips_for_route,
             arrival_times,
             departure_times,
+            departure_events,
             route_for_trip,
             footpaths_for_stops,
             transfer_times,
@@ -1386,6 +1490,25 @@ impl Timetable for GtfsTimetable {
         self.stops_for_route[route.idx()][pos as usize]
     }
 
+    fn mark_newly_active_stops(
+        &self,
+        lo: SecondOfDay,
+        hi: SecondOfDay,
+        marked: &mut fixedbitset::FixedBitSet,
+        require_wheelchair_accessible: bool,
+    ) {
+        if lo >= hi {
+            return;
+        }
+        let start = self.departure_events.partition_point(|event| event.0 < lo);
+        let end = self.departure_events.partition_point(|event| event.0 < hi);
+        for &(_, stop, accessible) in &self.departure_events[start..end] {
+            if !require_wheelchair_accessible || accessible {
+                marked.insert(stop.idx());
+            }
+        }
+    }
+
     fn get_earliest_trip(&self, route: RouteIdx, at: SecondOfDay, pos: u32) -> Option<TripIdx> {
         let trips = &self.trips_for_route[route.idx()];
         let dep_row = &self.departure_times[route.idx()][pos as usize];
@@ -1448,6 +1571,8 @@ impl Timetable for GtfsTimetable {
         let mut idx = departures.partition_point(|&departure| departure < at);
 
         while let Some(&trip) = trips.get(idx) {
+            #[cfg(feature = "profiling")]
+            crate::profiling::transfer_trip();
             let pickup_ok = self.no_pickup.is_empty() || !self.no_pickup.contains(&(trip, pos));
             let accessible = !require_wheelchair_accessible || !self.inaccessible_trips.contains(&trip);
             if !pickup_ok || !accessible {
@@ -1458,6 +1583,8 @@ impl Timetable for GtfsTimetable {
             let mut best_rule: Option<&ConstrainedTransfer> = None;
             let mut conflicting_rules = false;
             for rule in self.constrained_transfers.candidates(previous_trip).filter(|rule| {
+                    #[cfg(feature = "profiling")]
+                    crate::profiling::transfer_rule();
                     rule.from_stop.is_none_or(|value| value == previous_trip.alight_stop)
                         && rule.to_stop.is_none_or(|value| value == to_stop)
                         && rule.from_trip.is_none_or(|value| value == previous_trip.trip)
@@ -1886,6 +2013,136 @@ mod tests {
         };
         g.trips.insert("T".into(), trip);
         g
+    }
+
+    #[test]
+    fn lower_bound_graph_uses_fastest_segments_and_directed_walks() {
+        use std::sync::Arc;
+        let mut feed = synthetic_overnight_feed();
+        let stop_c = Arc::new(gtfs_structures::Stop { id: "C".into(), ..Default::default() });
+        feed.stops.insert("C".into(), stop_c);
+        let mut faster = feed.trips["T"].clone();
+        faster.id = "fast".into();
+        faster.stop_times[1].arrival_time = Some(6 * 3600 + 15 * 60);
+        faster.stop_times[1].departure_time = Some(6 * 3600 + 15 * 60);
+        feed.trips.insert(faster.id.clone(), faster);
+        let mut timetable = GtfsTimetable::new(&feed, jiff::civil::date(2026, 5, 4)).unwrap();
+        let a = timetable.stop_idx("A").unwrap();
+        let b = timetable.stop_idx("B").unwrap();
+        let c = timetable.stop_idx("C").unwrap();
+        timetable.footpaths_for_stops[b.idx()].push(c);
+        timetable.transfer_times.insert((b, c), Duration(120));
+
+        let graph = timetable.travel_time_lower_bound_graph().unwrap();
+        let distances = graph.to_targets(&[(c, Duration(30))]);
+        assert_eq!(distances[a.idx()], 900 + 120 + 30);
+        assert_eq!(distances[b.idx()], 120 + 30);
+        assert_eq!(distances[c.idx()], 30);
+        assert_eq!(graph.to_targets(&[(a, Duration::ZERO)])[c.idx()], u32::MAX);
+        assert_eq!(graph.to_targets(&[(b, Duration::ZERO), (c, Duration::ZERO)])[a.idx()], 900);
+    }
+
+    #[test]
+    fn lower_bound_graph_rejects_nonchronological_trips() {
+        let mut feed = synthetic_overnight_feed();
+        let trip = feed.trips.get_mut("T").unwrap();
+        trip.stop_times[1].arrival_time = Some(5 * 3600);
+        trip.stop_times[1].departure_time = Some(5 * 3600);
+        let timetable = GtfsTimetable::new(&feed, jiff::civil::date(2026, 5, 4)).unwrap();
+        assert!(timetable.travel_time_lower_bound_graph().is_err());
+    }
+
+    #[test]
+    fn lower_bound_graph_includes_loops_and_overnight_through_stops() {
+        let mut feed = synthetic_overnight_feed();
+        let trip = feed.trips.get_mut("T").unwrap();
+        trip.stop_times[0].arrival_time = Some(25 * 3600);
+        trip.stop_times[0].departure_time = Some(25 * 3600);
+        trip.stop_times[1].arrival_time = Some(25 * 3600 + 300);
+        trip.stop_times[1].departure_time = Some(25 * 3600 + 360);
+        trip.stop_times[1].pickup_type = PickupDropOffType::NotAvailable;
+        trip.stop_times[1].drop_off_type = PickupDropOffType::NotAvailable;
+        let mut repeated = trip.stop_times[0].clone();
+        repeated.arrival_time = Some(25 * 3600 + 600);
+        repeated.departure_time = Some(25 * 3600 + 600);
+        trip.stop_times.push(repeated);
+        let timetable = GtfsTimetable::new(&feed, jiff::civil::date(2026, 5, 4)).unwrap();
+        let a = timetable.stop_idx("A").unwrap();
+        let b = timetable.stop_idx("B").unwrap();
+        let graph = timetable.travel_time_lower_bound_graph().unwrap();
+        assert_eq!(graph.to_targets(&[(a, Duration::ZERO)])[b.idx()], 240);
+        assert_eq!(graph.to_targets(&[(b, Duration::ZERO)])[a.idx()], 300);
+    }
+
+    #[test]
+    fn indexed_departure_events_match_full_scan() {
+        use fixedbitset::FixedBitSet;
+        use jiff::civil::date;
+
+        let mut feed = synthetic_overnight_feed();
+        let original = feed.trips["T"].clone();
+        for (id, offset, inaccessible, no_pickup) in [
+            ("same-time", 0, true, false),
+            ("no-pickup", 300, false, true),
+            ("later", 600, false, false),
+            ("overnight", 19 * 3600, false, false),
+        ] {
+            let mut trip = original.clone();
+            trip.id = id.into();
+            if inaccessible {
+                trip.wheelchair_accessible = Availability::NotAvailable;
+            }
+            for stop_time in &mut trip.stop_times {
+                stop_time.arrival_time = stop_time.arrival_time.map(|t| t + offset);
+                stop_time.departure_time = stop_time.departure_time.map(|t| t + offset);
+                if no_pickup {
+                    stop_time.pickup_type = PickupDropOffType::NotAvailable;
+                }
+            }
+            feed.trips.insert(id.into(), trip);
+        }
+        let mut loop_trip = original.clone();
+        loop_trip.id = "loop".into();
+        let mut repeated_stop = loop_trip.stop_times[0].clone();
+        repeated_stop.arrival_time = Some(7 * 3600);
+        repeated_stop.departure_time = Some(7 * 3600);
+        loop_trip.stop_times.push(repeated_stop);
+        feed.trips.insert(loop_trip.id.clone(), loop_trip);
+        let timetable = GtfsTimetable::new_with_overnight_days(
+            &feed, date(2026, 5, 4), OvernightDays(1),
+        ).unwrap();
+        let mut boundaries = vec![0, 21600, 21900, 22200, 23400, 86400, 90000, u32::MAX];
+        for event in &timetable.departure_events {
+            boundaries.extend([event.0.0.saturating_sub(1), event.0.0, event.0.0.saturating_add(1)]);
+        }
+        boundaries.sort_unstable();
+        boundaries.dedup();
+        for &lo in &boundaries {
+            for &hi in &boundaries {
+                for accessible in [false, true] {
+                    let mut expected = FixedBitSet::with_capacity(timetable.n_stops());
+                    let mut actual = FixedBitSet::with_capacity(timetable.n_stops());
+                    expected.insert(0);
+                    actual.insert(0);
+                    if lo < hi {
+                        for r in 0..timetable.n_routes() as u32 {
+                            let route = RouteIdx::new(r);
+                            for (pos, &stop) in timetable.get_stops_after(route, 0).iter().enumerate() {
+                                if let Some(trip) = timetable.earliest_accessible_trip(
+                                    route, SecondOfDay(lo), pos as u32, accessible,
+                                ) && timetable.get_departure_time(trip, pos as u32) < SecondOfDay(hi) {
+                                    expected.insert(stop.idx());
+                                }
+                            }
+                        }
+                    }
+                    timetable.mark_newly_active_stops(
+                        SecondOfDay(lo), SecondOfDay(hi), &mut actual, accessible,
+                    );
+                    assert_eq!(actual, expected, "window [{lo}, {hi}), accessible={accessible}");
+                }
+            }
+        }
     }
 
     #[test]

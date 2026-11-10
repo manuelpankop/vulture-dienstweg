@@ -1,7 +1,7 @@
 //! [`Journey`] – what the algorithm returns: a sequence of `(route, alight stop)`
-//! steps plus a label at the target. [`Journey::with_timing`] reconstructs
-//! per-leg [`TimedLeg`]s (trip IDs and depart/arrive times) given the
-//! timetable; failures surface as [`TimingError`].
+//! steps plus a label at the target. Search-generated journeys retain exact
+//! boarding positions and footpaths. [`Journey::with_timing`] checks those
+//! steps against the timetable; failures surface as [`TimingError`].
 
 use crate::Timetable;
 use crate::ids::RouteIdx;
@@ -11,6 +11,37 @@ use crate::label::ArrivalTime;
 use crate::label::Label;
 use crate::time::Duration;
 use crate::time::SecondOfDay;
+
+/// Exact steps retained from the search, including intermediate walks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JourneyStep {
+    /// One directed walking edge.
+    Walk {
+        /// Start stop.
+        from: StopIdx,
+        /// End stop.
+        to: StopIdx,
+        /// Start time.
+        departure: SecondOfDay,
+        /// End time.
+        arrival: SecondOfDay,
+    },
+    /// One selected vehicle and its exact positions in the route.
+    Transit {
+        /// Route ridden.
+        route: RouteIdx,
+        /// Trip ridden.
+        trip: TripIdx,
+        /// Boarding stop.
+        board: StopIdx,
+        /// Alighting stop.
+        alight: StopIdx,
+        /// Boarding position on the route.
+        board_pos: u32,
+        /// Alighting position on the route.
+        alight_pos: u32,
+    },
+}
 
 /// A journey found by the RAPTOR algorithm.
 ///
@@ -51,6 +82,8 @@ pub struct Journey<L: Label = ArrivalTime> {
     pub plan: Vec<(RouteIdx, StopIdx)>,
     /// Exact trip selected for each corresponding entry in `plan`.
     pub trips: Vec<TripIdx>,
+    /// Exact search steps. An empty value permits legacy manually-built plans.
+    pub steps: Vec<JourneyStep>,
     /// The label at the target stop, with the target's walk-time offset
     /// already folded in. For [`ArrivalTime`], `label.arrival()` is the
     /// effective arrival time in seconds since midnight.
@@ -72,32 +105,63 @@ impl<L: Label> Journey<L> {
     /// for single-stop queries).
     ///
     /// Each [`TimedLeg`] reports the route, boarding stop, alighting stop,
-    /// [`TripIdx`], and times. When the previous alight stop is not on the
-    /// next route, this walks one direct footpath hop to find a serving
-    /// neighbour and uses it as the next `board`. The walk time advances
-    /// `depart` without producing a separate leg; callers detect a walking
-    /// transfer by comparing `legs[n].alight` with `legs[n+1].board`.
+    /// [`TripIdx`], and times. Exact walks are available in [`Journey::steps`];
+    /// they are checked here but do not produce separate `TimedLeg`s.
+    /// For legacy manually constructed journeys with empty `steps`, this
+    /// instead infers at most one walking hop between successive legs.
     ///
     /// # Errors
     ///
-    /// Returns a [`TimingError`] when the plan can't be matched against
-    /// `tt`. For a `Journey` produced by the same `tt` and `depart`, the
-    /// realistic failure is [`TimingError::NoBoardingStop`] when a transfer
-    /// would need a walk chain longer than one direct footpath hop
-    /// (multi-hop walk reconstruction is not implemented). The remaining
-    /// variants indicate a programmer error or mismatched timetable.
-    ///
-    /// **Loop routes:** when `route` revisits the boarding stop, the
-    /// *earliest* qualifying position is picked, matching
-    /// [`Timetable::get_routes_serving_stop`]. For non-loop routes this is
-    /// unambiguous; for loop-heavy networks the reconstructed trip matches
-    /// the algorithm's choice in practice.
+    /// Returns a [`TimingError`] when the steps or legacy plan cannot be
+    /// matched against `tt` or the requested departure.
     pub fn with_timing<T: Timetable>(
         &self,
         tt: &T,
         depart: SecondOfDay,
         origin_walk: Duration,
     ) -> Result<Vec<TimedLeg>, TimingError> {
+        if !self.steps.is_empty() {
+            let mut legs = Vec::with_capacity(self.plan.len());
+            let mut time = depart + origin_walk;
+            let mut stop = self.origin;
+            for (step_index, step) in self.steps.iter().enumerate() {
+                match *step {
+                    JourneyStep::Walk { from, to, departure, arrival } => {
+                        if from != stop || departure < time || arrival < departure
+                            || !tt.get_footpaths_from(from).contains(&to)
+                            || departure + tt.get_transfer_time(from, to) != arrival
+                        {
+                            return Err(TimingError::InvalidStep { step: step_index });
+                        }
+                        time = arrival;
+                        stop = to;
+                    }
+                    JourneyStep::Transit { route, trip, board, alight, board_pos, alight_pos } => {
+                        let route_stops = tt.get_stops_after(route, 0);
+                        if board != stop || alight_pos <= board_pos
+                            || route_stops.get(board_pos as usize) != Some(&board)
+                            || route_stops.get(alight_pos as usize) != Some(&alight)
+                        {
+                            return Err(TimingError::InvalidStep { step: step_index });
+                        }
+                        let departure = tt.get_departure_time(trip, board_pos);
+                        if departure < time {
+                            return Err(TimingError::NoCatchableTrip {
+                                leg: legs.len(), route, board_pos, at: time,
+                            });
+                        }
+                        let arrive = tt.get_arrival_time(trip, alight_pos);
+                        legs.push(TimedLeg { route, board, alight, trip, depart: departure, arrive });
+                        stop = alight;
+                        time = arrive;
+                    }
+                }
+            }
+            if stop != self.target {
+                return Err(TimingError::InvalidStep { step: self.steps.len() });
+            }
+            return Ok(legs);
+        }
         let mut legs = Vec::with_capacity(self.plan.len());
         let mut current_time = depart + origin_walk;
         let mut current_stop = self.origin;
@@ -215,15 +279,17 @@ pub struct TimedLeg {
 /// Failure modes for [`Journey::with_timing`].
 ///
 /// Each variant carries the leg index where reconstruction stopped (zero-based)
-/// and enough context to identify what went wrong. For a `Journey` produced by
-/// the same timetable the algorithm ran against, the only variant a caller
-/// realistically hits is [`TimingError::NoBoardingStop`] – and only when a
-/// transfer needs a walk chain longer than one direct footpath hop. The other
-/// two variants surface programmer errors (a `Journey` matched against a
-/// different timetable, a custom adapter violating the no-overtaking contract).
+/// and enough context to identify what went wrong, including inconsistent
+/// exact steps, legacy plans and mismatched timetables.
 #[non_exhaustive]
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum TimingError {
+    /// A reconstructed step is not connected or contradicts the timetable.
+    #[error("journey step {step} is inconsistent with its predecessor or timetable")]
+    InvalidStep {
+        /// Zero-based index of the invalid step.
+        step: usize,
+    },
     /// The reconstructed plan has no selected trip at this leg position.
     #[error("leg {leg}: journey has no selected trip")]
     MissingSelectedTrip {

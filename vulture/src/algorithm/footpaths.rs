@@ -43,7 +43,7 @@ pub(crate) fn relax_footpaths_round_closed<T: Timetable + ?Sized, L: Label>(
     // Walk each source bag's labels once. With closure, chained walks
     // are unnecessary because every reachable pair is already a direct
     // edge in the relation.
-    let mut staged: SmallVec<[L; 8]> = SmallVec::new();
+    let mut staged: SmallVec<[(L, Option<usize>); 8]> = SmallVec::new();
     for stop_bit in sources.ones() {
         let stop = StopIdx::new(stop_bit as u32);
         if labels[k][stop.idx()].is_empty() {
@@ -52,12 +52,15 @@ pub(crate) fn relax_footpaths_round_closed<T: Timetable + ?Sized, L: Label>(
         // Snapshot the source bag so we don't iterate while mutating
         // labels[k] (which can include the source itself).
         staged.clear();
-        staged.extend(labels[k][stop.idx()].iter().copied());
+        staged.extend(labels[k][stop.idx()].iter_with_node());
 
         for &p_dash in timetable.get_footpaths_from(stop) {
             let walk = timetable.get_transfer_time(stop, p_dash);
-            for source_label in &staged {
+            for &(source_label, parent_node) in &staged {
                 let via_walk = source_label.extend_by_footpath(ctx, stop, p_dash, walk);
+                if !via_walk.can_reach_target(ctx, p_dash) {
+                    continue;
+                }
                 insert_into_bag(
                     labels,
                     best_arrival,
@@ -68,9 +71,11 @@ pub(crate) fn relax_footpaths_round_closed<T: Timetable + ?Sized, L: Label>(
                     k,
                     p_dash,
                     via_walk,
+                    parent_node,
                     Step::Walked {
                         from: stop,
-                        parent_arrival: source_label.arrival(),
+                        departure: source_label.arrival(),
+                        arrival: via_walk.arrival(),
                     },
                 );
             }
@@ -128,7 +133,7 @@ pub(crate) fn relax_footpaths_round<T: Timetable + ?Sized, L: Label>(
         }
     }
 
-    let mut staged: SmallVec<[L; 8]> = SmallVec::new();
+    let mut staged: SmallVec<[(L, Option<usize>); 8]> = SmallVec::new();
     while let Some(Reverse((arrival, stop_bit))) = heap.pop() {
         let stop = StopIdx::new(stop_bit);
         let stop_min = labels[k][stop.idx()].min_arrival();
@@ -137,13 +142,16 @@ pub(crate) fn relax_footpaths_round<T: Timetable + ?Sized, L: Label>(
             continue;
         }
         staged.clear();
-        staged.extend(labels[k][stop.idx()].iter().copied());
+        staged.extend(labels[k][stop.idx()].iter_with_node());
 
         for &p_dash in timetable.get_footpaths_from(stop) {
             let walk = timetable.get_transfer_time(stop, p_dash);
             let mut any_added = false;
-            for source_label in &staged {
+            for &(source_label, parent_node) in &staged {
                 let via_walk = source_label.extend_by_footpath(ctx, stop, p_dash, walk);
+                if !via_walk.can_reach_target(ctx, p_dash) {
+                    continue;
+                }
                 if insert_into_bag(
                     labels,
                     best_arrival,
@@ -154,9 +162,11 @@ pub(crate) fn relax_footpaths_round<T: Timetable + ?Sized, L: Label>(
                     k,
                     p_dash,
                     via_walk,
+                    parent_node,
                     Step::Walked {
                         from: stop,
-                        parent_arrival: source_label.arrival(),
+                        departure: source_label.arrival(),
+                        arrival: via_walk.arrival(),
                     },
                 ) {
                     any_added = true;

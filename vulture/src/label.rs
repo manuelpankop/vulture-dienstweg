@@ -10,7 +10,7 @@ use crate::time::SecondOfDay;
 /// Per-trip context passed to [`Label::extend_by_trip`]. Single-criterion
 /// labels read only `arrival`; multi-criterion impls (fare-aware,
 /// route-preference, transfer-penalty) draw on the remaining fields.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TripContext {
     /// The trip the rider is alighting from.
     pub trip: TripIdx,
@@ -194,10 +194,29 @@ pub trait Label: Copy + std::fmt::Debug {
         self.arrival() <= other.arrival()
     }
 
+    /// If true, boarding any one particular trip erases all differences
+    /// between the boarding labels for subsequent stops on that trip.
+    /// This must hold regardless of where the trip was boarded.
+    const SAME_TRIP_BOARDINGS_EQUIVALENT: bool = false;
+
+    /// Optional partition for dominance checks. When supplied, all labels of
+    /// this type must supply a key, and a label must never dominate another
+    /// label with a different key. Equal keys may still be incomparable.
+    fn dominance_partition(&self) -> Option<u64> {
+        None
+    }
+
     /// Effective arrival time at the labelled stop. Used by the
     /// algorithm for target-threshold comparisons and by [`Journey`](crate::Journey)
     /// output. Always returns [`SecondOfDay::MAX`] for [`Label::UNREACHED`].
     fn arrival(&self) -> SecondOfDay;
+
+    /// Whether this label can still contribute to the query at `stop`.
+    /// Implementations may reject a label only when it cannot produce any
+    /// requested journey; the default keeps all labels.
+    fn can_reach_target(&self, _ctx: &Self::Ctx, _stop: StopIdx) -> bool {
+        true
+    }
 
     /// Transfer context for the transit trip that produced this label.
     /// Labels which don't model transfer constraints can keep the default.

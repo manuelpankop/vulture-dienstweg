@@ -1,10 +1,7 @@
 //! Range-query specialisation: rRAPTOR scan
 //! ([`raptor_range_rrap_arrival`]) plus its Pareto-front filter
-//! ([`filter_range_pareto_front`]) and the helper that marks stops
-//! whose trips just became catchable in a new τ window
-//! ([`newly_active_stops_into`]).
-
-use fixedbitset::FixedBitSet;
+//! ([`filter_range_pareto_front`]). Timetables mark stops whose trips
+//! became catchable between successive departure times.
 
 use crate::RangeJourney;
 use crate::RaptorCache;
@@ -12,7 +9,6 @@ use crate::Timetable;
 use crate::algorithm::boarding::extract_target_journeys;
 use crate::algorithm::per_call::run_raptor_rounds;
 use crate::endpoints::Endpoints;
-use crate::ids::RouteIdx;
 use crate::label::Label;
 use crate::time::SecondOfDay;
 
@@ -66,42 +62,6 @@ pub(crate) fn filter_range_pareto_front<L: Label>(
         front.extend(slot_front);
     }
     front
-}
-
-/// Mark stops where any route through them has a trip whose departure
-/// time at that position falls in `[lo, hi)`. Used by rRAPTOR between
-/// τ scans to find stops that need rescanning because new trips just
-/// became catchable.
-///
-/// `marked` is the destination bitset; bits already set are preserved.
-/// One `get_earliest_trip` lookup per (route, position) plus one
-/// `get_departure_time` if the lookup hits – overall
-/// O(n_routes × max_route_len) calls per invocation, each O(log
-/// n_trips_per_route) inside the trait impl.
-pub(crate) fn newly_active_stops_into<T: Timetable + ?Sized>(
-    tt: &T,
-    lo: SecondOfDay,
-    hi: SecondOfDay,
-    marked: &mut FixedBitSet,
-    require_wheelchair_accessible: bool,
-) {
-    if lo >= hi {
-        return;
-    }
-    let n_routes = tt.n_routes() as u32;
-    for r in 0..n_routes {
-        let route = RouteIdx::new(r);
-        let stops = tt.get_stops_after(route, 0);
-        for (pos_offset, &stop) in stops.iter().enumerate() {
-            let pos = pos_offset as u32;
-            if let Some(trip) =
-                tt.earliest_accessible_trip(route, lo, pos, require_wheelchair_accessible)
-                && tt.get_departure_time(trip, pos) < hi
-            {
-                marked.insert(stop.idx());
-            }
-        }
-    }
 }
 
 /// Range-query algorithm specialised for `Label = ArrivalTime`. Single
@@ -167,7 +127,11 @@ pub(crate) fn raptor_range_rrap<T: Timetable + ?Sized, L: Label>(
     let mut output: Vec<RangeJourney<L>> = Vec::new();
     let mut prev_tau: Option<SecondOfDay> = None;
 
+    #[cfg(feature = "profiling")]
+    eprintln!("range departures={} origins={} targets={} boardings={transfers}", departures.len(), origins.len(), targets.len());
     for &tau in departures {
+        #[cfg(feature = "profiling")]
+        eprintln!("range departure_seconds={}", tau.as_secs());
         // (a) Seed sources at τ + walk. `LabelBag::insert` returns
         // true iff the new label strictly improves the bag; for τ <
         // prev_tau the new label dominates the prior one, so
@@ -188,7 +152,17 @@ pub(crate) fn raptor_range_rrap<T: Timetable + ?Sized, L: Label>(
         // exactly `tau` are first-catchable in this scan, while trips
         // at `prev_tau` were already covered by the previous scan.
         if let Some(prev) = prev_tau {
-            newly_active_stops_into(tt, tau, prev, marked_stops, require_wheelchair_accessible);
+            tt.mark_newly_active_stops(tau, prev, marked_stops, require_wheelchair_accessible);
+            // Round 1 boards only from round-0 labels. Events elsewhere
+            // cannot add a boarding to this round and would queue unrelated
+            // routes across the entire network.
+            let inactive: Vec<_> = marked_stops
+                .ones()
+                .filter(|&stop| labels[0][stop].is_empty())
+                .collect();
+            for stop in inactive {
+                marked_stops.set(stop, false);
+            }
         }
 
         // (c) Round-0 footpath relax + rounds 1..=transfers, sharing
@@ -211,8 +185,16 @@ pub(crate) fn raptor_range_rrap<T: Timetable + ?Sized, L: Label>(
         );
 
         // (d) Snapshot per-target journeys for this τ.
+        #[cfg(feature = "profiling")]
+        let reconstruction_started = std::time::Instant::now();
         let snapshot =
             extract_target_journeys(ctx, labels, board_detail, origin_set, targets, transfers);
+        #[cfg(feature = "profiling")]
+        eprintln!(
+            "range reconstruction_ms={} journeys={}",
+            reconstruction_started.elapsed().as_millis(),
+            snapshot.len()
+        );
         for journey in snapshot {
             output.push(RangeJourney {
                 depart: tau,

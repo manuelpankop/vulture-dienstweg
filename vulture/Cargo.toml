@@ -19,6 +19,7 @@ default = ["parallel"]
 internal = []
 dotgraph = ["dep:dot_graph"]
 gtfs-bench = []
+profiling = []
 parallel = ["dep:rayon"]
 
 [dev-dependencies]

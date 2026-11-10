@@ -7,7 +7,6 @@ use std::collections::BinaryHeap;
 use std::sync::Mutex;
 
 use fixedbitset::FixedBitSet;
-use rustc_hash::FxHashMap;
 
 use crate::K;
 use crate::Timetable;
@@ -102,7 +101,7 @@ impl<L: Label> RaptorCache<L> {
             n_routes,
             labels: Vec::new(),
             best_arrival: (0..n_stops).map(|_| LabelBag::new()).collect(),
-            board_detail: FxHashMap::default(),
+            board_detail: BoardingTree::default(),
             marked_stops: FixedBitSet::with_capacity(n_stops as usize),
             q_entry: vec![None; n_routes as usize],
             q_routes: Vec::new(),

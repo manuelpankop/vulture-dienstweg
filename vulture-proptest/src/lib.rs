@@ -518,6 +518,7 @@ mod tests {
             target_walk: Duration::ZERO,
             trips: vec![TripIdx::new(0); plan.len()],
             plan,
+            steps: Vec::new(),
             label: ArrivalTime(SecondOfDay(arrival)),
         }
     }

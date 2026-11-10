@@ -1,153 +1,103 @@
-//! Boarding-tree types ([`Step`], [`BoardingTree`]) and the journey
-//! reconstruction helpers that walk them ([`reconstruct_journey`],
-//! [`extract_target_journeys`], [`best_to_any_target`]).
+//! Immutable journey predecessor nodes and reconstruction.
 
 use fixedbitset::FixedBitSet;
-use rustc_hash::FxHashMap;
 
-use crate::K;
 use crate::algorithm::label_bag::LabelBag;
-use crate::ids::RouteIdx;
-use crate::ids::StopIdx;
-use crate::journey::Journey;
+use crate::ids::{RouteIdx, StopIdx, TripIdx};
+use crate::journey::{Journey, JourneyStep};
 use crate::label::Label;
-use crate::time::Duration;
-use crate::time::SecondOfDay;
+use crate::time::{Duration, SecondOfDay};
 
-/// One reconstructable step in a journey: either a transit boarding event
-/// (route-scan) or a walk along a footpath. Walks do not consume a round —
-/// they happen *within* round `k` at the stop they alight on – so the
-/// reconstruction logic chains through walk entries without decrementing
-/// the round index.
-///
-/// `parent_arrival` disambiguates which Pareto-optimal label at the
-/// parent stop (in the parent stop's bag) was extended to produce
-/// the label this step belongs to. For single-criterion `ArrivalTime`
-/// the parent bag is size-1, so this field is redundant; for
-/// multi-criterion impls it lets reconstruction follow the right
-/// label through the bag.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Step {
     Boarded {
         from: StopIdx,
         route: RouteIdx,
-        trip: crate::TripIdx,
-        parent_arrival: SecondOfDay,
+        trip: TripIdx,
+        board_pos: u32,
+        alight_pos: u32,
     },
     Walked {
         from: StopIdx,
-        parent_arrival: SecondOfDay,
+        departure: SecondOfDay,
+        arrival: SecondOfDay,
     },
 }
 
-/// Boarding tree key: `(round, stop, label_arrival)`. The third
-/// component disambiguates Pareto-optimal labels with distinct
-/// arrival times in the same `(round, stop)` bag.
-///
-/// `FxHashMap` (the rustc-internal hasher): the only access
-/// patterns are point insert (per successful label insert in
-/// route-scan or footpath relax) and point lookup (during
-/// reconstruction at the end of the query). No range scans, no
-/// ordered iteration, no enumeration. The earlier `BTreeMap`
-/// showed up at ~12 % of self-time in the merged-PR1 profile,
-/// mostly in `search_tree` / `find_key_index` / tuple `cmp` chains
-/// driven by tree-rebalancing on every insert; a hash map turns
-/// each of those into a hash + bucket probe. `FxHash` over the
-/// default `SipHash` because the keys are 16-byte tuples of
-/// integer indices and the hasher cost dominates on the small
-/// boarding trees produced by short queries (`direct_1trip` has
-/// ~10 entries; SipHash on a small map regresses 2-4 % vs
-/// `BTreeMap` while FxHash wins across the board).
-pub(crate) type BoardingTree = FxHashMap<(K, StopIdx, SecondOfDay), Step>;
+#[derive(Debug, Clone, Copy)]
+struct Node {
+    parent: Option<usize>,
+    stop: StopIdx,
+    step: Step,
+}
 
-/// Reconstruct a single candidate plan terminating at the target
-/// label `(pt, target_arrival)` at round `k`. Traces back through
-/// the boarding tree (which is keyed on `(round, stop, label_arrival)`
-/// to disambiguate Pareto-optimal labels in the same bag). Returns
-/// `Some((origin, plan))` if the trace reaches some stop in `origins`,
-/// `None` otherwise.
-pub(crate) fn reconstruct_journey(
-    tree: &BoardingTree,
-    origins: &FixedBitSet,
-    pt: StopIdx,
-    target_arrival: SecondOfDay,
-    k: K,
-) -> Option<(StopIdx, Vec<(RouteIdx, StopIdx)>, Vec<crate::TripIdx>)> {
-    if tree.is_empty() {
-        return None;
+#[derive(Default)]
+pub(crate) struct BoardingTree {
+    nodes: Vec<Node>,
+}
+
+impl BoardingTree {
+    pub(crate) fn clear(&mut self) {
+        self.nodes.clear();
     }
 
-    let mut plan = Vec::with_capacity(k);
-    let mut trips = Vec::with_capacity(k);
-    let mut parent = pt;
-    let mut parent_arrival = target_arrival;
-    let mut inner_k = k;
-    // Defensive bound to avoid pathological loops; 100 walk-hops per
-    // round is well beyond anything realistic.
-    let mut budget = (k + 1) * 100;
+    pub(crate) fn insert(&mut self, parent: Option<usize>, stop: StopIdx, step: Step) -> usize {
+        let id = self.nodes.len();
+        self.nodes.push(Node { parent, stop, step });
+        id
+    }
+}
 
-    // Always attempt at least one tree lookup before terminating on
-    // origin membership. In multi-source queries the target may also
-    // be one of the origins; checking origin membership first would
-    // discard the genuine boarded journey from a different origin.
-    loop {
-        if budget == 0 {
-            break;
-        }
-        budget -= 1;
-
-        let Some(step) = tree.get(&(inner_k, parent, parent_arrival)).copied() else {
-            break;
-        };
-
-        match step {
+fn reconstruct_journey(
+    tree: &BoardingTree,
+    origins: &FixedBitSet,
+    mut node_id: usize,
+) -> Option<(StopIdx, Vec<JourneyStep>)> {
+    let mut steps = Vec::new();
+    let origin = loop {
+        let node = tree.nodes.get(node_id)?;
+        let previous = match node.step {
             Step::Boarded {
                 from,
                 route,
                 trip,
-                parent_arrival: pa,
+                board_pos,
+                alight_pos,
             } => {
-                plan.push((route, parent));
-                trips.push(trip);
-                parent = from;
-                parent_arrival = pa;
-                if inner_k == 0 {
-                    break;
-                }
-                inner_k -= 1;
+                steps.push(JourneyStep::Transit {
+                    route,
+                    trip,
+                    board: from,
+                    alight: node.stop,
+                    board_pos,
+                    alight_pos,
+                });
+                from
             }
             Step::Walked {
                 from,
-                parent_arrival: pa,
+                departure,
+                arrival,
             } => {
-                parent = from;
-                parent_arrival = pa;
-                // walks do not consume a round
+                steps.push(JourneyStep::Walk {
+                    from,
+                    to: node.stop,
+                    departure,
+                    arrival,
+                });
+                from
             }
+        };
+        match node.parent {
+            Some(parent) => node_id = parent,
+            None if origins.contains(previous.idx()) => break previous,
+            None => return None,
         }
-
-        if origins.contains(parent.idx()) {
-            break;
-        }
-    }
-
-    if !plan.is_empty() && origins.contains(parent.idx()) {
-        plan.reverse();
-        trips.reverse();
-        Some((parent, plan, trips))
-    } else {
-        None
-    }
+    };
+    steps.reverse();
+    Some((origin, steps))
 }
 
-/// Reconstruct one Pareto-front-of-trip-counts worth of journeys
-/// for the given targets at the current cache state. Used by both
-/// the per-call algorithm (after running rounds) and the rRAPTOR
-/// scan (snapshot at end of each τ scan).
-///
-/// Walks each target × round × label-bag entry, traces back via
-/// `reconstruct_journey`, and applies the target's walk-time offset.
-/// Output is unfiltered (caller applies any Pareto front filtering).
 pub(crate) fn extract_target_journeys<L: Label>(
     ctx: &L::Ctx,
     labels: &[Vec<LabelBag<L>>],
@@ -156,38 +106,70 @@ pub(crate) fn extract_target_journeys<L: Label>(
     targets: &[(StopIdx, Duration)],
     transfers: usize,
 ) -> Vec<Journey<L>> {
-    let mut journeys: Vec<Journey<L>> = Vec::new();
+    let mut journeys = Vec::new();
     for &(target, walk) in targets {
-        #[allow(clippy::needless_range_loop)]
-        for k in 1..=transfers {
-            for raw_label in labels[k][target.idx()].iter() {
-                let raw_arr = raw_label.arrival();
-                if raw_arr == SecondOfDay::MAX {
+        for bags in labels.iter().take(transfers + 1).skip(1) {
+            for (raw_label, node) in bags[target.idx()].iter_with_node() {
+                if raw_label.arrival() == SecondOfDay::MAX {
                     continue;
                 }
-                let Some((origin, plan, trips)) =
-                    reconstruct_journey(board_detail, origin_set, target, raw_arr, k)
+                let Some((origin, steps)) =
+                    node.and_then(|id| reconstruct_journey(board_detail, origin_set, id))
                 else {
                     continue;
                 };
-                // The user's target walk-offset is conceptually "walk
-                // from the algorithm's target stop to the rider's
-                // effective destination." We don't have a distinct
-                // StopIdx for the destination, so pass `(target,
-                // target)` — labels carrying spatial criteria treat
-                // it as no-op, labels carrying time-only criteria add
-                // `walk` to their arrival.
-                let label = raw_label.extend_by_footpath(ctx, target, target, walk);
+                let plan = steps
+                    .iter()
+                    .filter_map(|step| match step {
+                        JourneyStep::Transit { route, alight, .. } => Some((*route, *alight)),
+                        _ => None,
+                    })
+                    .collect();
+                let trips = steps
+                    .iter()
+                    .filter_map(|step| match step {
+                        JourneyStep::Transit { trip, .. } => Some(*trip),
+                        _ => None,
+                    })
+                    .collect();
                 journeys.push(Journey {
                     origin,
                     target,
                     target_walk: walk,
                     plan,
                     trips,
-                    label,
+                    steps,
+                    label: raw_label.extend_by_footpath(ctx, target, target, walk),
                 });
             }
         }
     }
     journeys
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn predecessor_nodes_remain_stable_for_identical_arrivals() {
+        let origin = StopIdx::new(0);
+        let target = StopIdx::new(1);
+        let mut origins = FixedBitSet::with_capacity(2);
+        origins.insert(origin.idx());
+        let mut tree = BoardingTree::default();
+        let node = |trip| Step::Boarded {
+            from: origin,
+            route: RouteIdx::new(trip),
+            trip: TripIdx::new(trip),
+            board_pos: 0,
+            alight_pos: 1,
+        };
+        let first = tree.insert(None, target, node(1));
+        let second = tree.insert(None, target, node(2));
+        let (_, steps) = reconstruct_journey(&tree, &origins, first).unwrap();
+        assert!(matches!(steps[0], JourneyStep::Transit { trip, .. } if trip == TripIdx::new(1)));
+        let (_, steps) = reconstruct_journey(&tree, &origins, second).unwrap();
+        assert!(matches!(steps[0], JourneyStep::Transit { trip, .. } if trip == TripIdx::new(2)));
+    }
 }

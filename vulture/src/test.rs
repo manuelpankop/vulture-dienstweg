@@ -2232,7 +2232,6 @@ fn parallel_range_query_matches_serial() {
 
 #[test]
 fn newly_active_stops_marks_only_in_window() {
-    use crate::algorithm::range::newly_active_stops_into;
     use fixedbitset::FixedBitSet;
 
     // Two routes, each with three trips at distinct departures.
@@ -2321,7 +2320,7 @@ fn newly_active_stops_marks_only_in_window() {
     // Window [180, 270): R1's T2 (200) and R2's T5 (250) qualify.
     // Stops marked: A and B (R1 reaches both via T2), C and D (R2 reaches both via T5).
     // T2 also has B at 210 and T5 has D at 260 – both fall in the window.
-    newly_active_stops_into(&tt, SecondOfDay(180), SecondOfDay(270), &mut marked, false);
+    tt.mark_newly_active_stops(SecondOfDay(180), SecondOfDay(270), &mut marked, false);
     assert!(marked.contains(tt.stop_idx_of(&S::A).idx()));
     assert!(marked.contains(tt.stop_idx_of(&S::B).idx()));
     assert!(marked.contains(tt.stop_idx_of(&S::C).idx()));
@@ -2329,12 +2328,12 @@ fn newly_active_stops_marks_only_in_window() {
 
     // Empty window: nothing changes.
     let mut marked2 = FixedBitSet::with_capacity(tt.n_stops());
-    newly_active_stops_into(&tt, SecondOfDay(500), SecondOfDay(500), &mut marked2, false);
+    tt.mark_newly_active_stops(SecondOfDay(500), SecondOfDay(500), &mut marked2, false);
     assert_eq!(marked2.count_ones(..), 0);
 
     // Window with no qualifying trip: nothing changes.
     let mut marked3 = FixedBitSet::with_capacity(tt.n_stops());
-    newly_active_stops_into(&tt, SecondOfDay(120), SecondOfDay(140), &mut marked3, false);
+    tt.mark_newly_active_stops(SecondOfDay(120), SecondOfDay(140), &mut marked3, false);
     assert_eq!(marked3.count_ones(..), 0);
 
     // Boundary: dep == lo is included (lower bound is inclusive).
@@ -2342,7 +2341,7 @@ fn newly_active_stops_marks_only_in_window() {
     // so A and B are marked. T5's C=250 hits hi exactly and is excluded; T4's
     // C=150 is below lo. Hence C and D must NOT be marked.
     let mut marked4 = FixedBitSet::with_capacity(tt.n_stops());
-    newly_active_stops_into(&tt, SecondOfDay(200), SecondOfDay(250), &mut marked4, false);
+    tt.mark_newly_active_stops(SecondOfDay(200), SecondOfDay(250), &mut marked4, false);
     assert!(marked4.contains(tt.stop_idx_of(&S::A).idx()));
     assert!(marked4.contains(tt.stop_idx_of(&S::B).idx()));
     assert!(!marked4.contains(tt.stop_idx_of(&S::C).idx()));
@@ -2353,7 +2352,7 @@ fn newly_active_stops_marks_only_in_window() {
     // so A and B are marked. T6's C=350 hits hi exactly and is excluded; T5's
     // C=250 is below lo. Hence C and D must NOT be marked.
     let mut marked5 = FixedBitSet::with_capacity(tt.n_stops());
-    newly_active_stops_into(&tt, SecondOfDay(300), SecondOfDay(350), &mut marked5, false);
+    tt.mark_newly_active_stops(SecondOfDay(300), SecondOfDay(350), &mut marked5, false);
     assert!(marked5.contains(tt.stop_idx_of(&S::A).idx()));
     assert!(marked5.contains(tt.stop_idx_of(&S::B).idx()));
     assert!(!marked5.contains(tt.stop_idx_of(&S::C).idx()));
@@ -2364,7 +2363,7 @@ fn newly_active_stops_marks_only_in_window() {
     // afterwards (the helper only ever calls `insert`, never clears).
     let mut marked6 = FixedBitSet::with_capacity(tt.n_stops());
     marked6.insert(tt.stop_idx_of(&S::A).idx());
-    newly_active_stops_into(&tt, SecondOfDay(500), SecondOfDay(500), &mut marked6, false);
+    tt.mark_newly_active_stops(SecondOfDay(500), SecondOfDay(500), &mut marked6, false);
     assert!(marked6.contains(tt.stop_idx_of(&S::A).idx()));
 }
 
