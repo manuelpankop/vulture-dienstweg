@@ -218,6 +218,19 @@ pub trait Label: Copy + std::fmt::Debug {
         true
     }
 
+    /// Reject a boarding only if no later alighting from this trip can
+    /// contribute to any requested journey.
+    fn can_board_trip<T: crate::Timetable + ?Sized>(
+        &self,
+        _ctx: &Self::Ctx,
+        _timetable: &T,
+        _route: RouteIdx,
+        _trip: TripIdx,
+        _position: u32,
+    ) -> bool {
+        true
+    }
+
     /// Transfer context for the transit trip that produced this label.
     /// Labels which don't model transfer constraints can keep the default.
     fn transfer_context(&self) -> Option<TripContext> {

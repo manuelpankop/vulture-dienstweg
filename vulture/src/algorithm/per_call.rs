@@ -461,6 +461,9 @@ pub(crate) fn run_raptor_rounds<T: Timetable + ?Sized, L: Label>(
                         Some(t) => t,
                         None => continue,
                     };
+                    if !candidate.can_board_trip(ctx, tt, route, trip, pos) {
+                        continue;
+                    }
                     let trip_dep = tt.get_departure_time(trip, pos);
 
                     route_bag.insert((candidate, trip, pi, pos, parent_node), trip_dep, |existing| {

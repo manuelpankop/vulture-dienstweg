@@ -315,6 +315,24 @@ where
             self.origins,
             self.targets,
             self.require_wheelchair_accessible,
+            None,
+        )
+    }
+
+    /// Execute a descending range query until the callback requests a stop.
+    /// The caller must ensure omitted earlier departures cannot affect its result.
+    pub fn run_until(self, mut stop_after: impl FnMut(SecondOfDay, &[Journey<L>]) -> bool) -> Vec<RangeJourney<L>> {
+        let mut cache = RaptorCache::<L>::for_timetable(self.tt);
+        raptor_range_rrap(
+            self.tt,
+            &self.ctx,
+            &mut cache,
+            self.max_transfers.0 as usize,
+            &self.mode.departures,
+            self.origins,
+            self.targets,
+            self.require_wheelchair_accessible,
+            Some(&mut stop_after),
         )
     }
 }

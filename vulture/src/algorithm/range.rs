@@ -4,6 +4,7 @@
 //! became catchable between successive departure times.
 
 use crate::RangeJourney;
+use crate::Journey;
 use crate::RaptorCache;
 use crate::Timetable;
 use crate::algorithm::boarding::extract_target_journeys;
@@ -99,6 +100,7 @@ pub(crate) fn raptor_range_rrap<T: Timetable + ?Sized, L: Label>(
     origins: Endpoints,
     targets: Endpoints,
     require_wheelchair_accessible: bool,
+    mut stop_after: Option<&mut dyn FnMut(SecondOfDay, &[Journey<L>]) -> bool>,
 ) -> Vec<RangeJourney<L>> {
     let origins = origins.as_slice();
     let targets = targets.as_slice();
@@ -195,11 +197,15 @@ pub(crate) fn raptor_range_rrap<T: Timetable + ?Sized, L: Label>(
             reconstruction_started.elapsed().as_millis(),
             snapshot.len()
         );
+        let stop = stop_after.as_mut().is_some_and(|predicate| predicate(tau, &snapshot));
         for journey in snapshot {
             output.push(RangeJourney {
                 depart: tau,
                 journey,
             });
+        }
+        if stop {
+            break;
         }
 
         prev_tau = Some(tau);
