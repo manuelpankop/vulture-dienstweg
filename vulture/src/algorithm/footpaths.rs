@@ -57,6 +57,9 @@ pub(crate) fn relax_footpaths_round_closed<T: Timetable + ?Sized, L: Label>(
         for &p_dash in timetable.get_footpaths_from(stop) {
             let walk = timetable.get_transfer_time(stop, p_dash);
             for &(source_label, parent_node) in &staged {
+                if !source_label.can_take_footpath(ctx, stop, p_dash) {
+                    continue;
+                }
                 let via_walk = source_label.extend_by_footpath(ctx, stop, p_dash, walk);
                 if !via_walk.can_reach_target(ctx, p_dash) {
                     continue;
@@ -77,6 +80,7 @@ pub(crate) fn relax_footpaths_round_closed<T: Timetable + ?Sized, L: Label>(
                         departure: source_label.arrival(),
                         arrival: via_walk.arrival(),
                     },
+                    ctx,
                 );
             }
         }
@@ -148,6 +152,9 @@ pub(crate) fn relax_footpaths_round<T: Timetable + ?Sized, L: Label>(
             let walk = timetable.get_transfer_time(stop, p_dash);
             let mut any_added = false;
             for &(source_label, parent_node) in &staged {
+                if !source_label.can_take_footpath(ctx, stop, p_dash) {
+                    continue;
+                }
                 let via_walk = source_label.extend_by_footpath(ctx, stop, p_dash, walk);
                 if !via_walk.can_reach_target(ctx, p_dash) {
                     continue;
@@ -168,6 +175,7 @@ pub(crate) fn relax_footpaths_round<T: Timetable + ?Sized, L: Label>(
                         departure: source_label.arrival(),
                         arrival: via_walk.arrival(),
                     },
+                    ctx,
                 ) {
                     any_added = true;
                 }

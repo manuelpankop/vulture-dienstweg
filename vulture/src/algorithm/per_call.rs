@@ -409,6 +409,7 @@ pub(crate) fn run_raptor_rounds<T: Timetable + ?Sized, L: Label>(
                             best_arrival,
                             targets,
                             &new_label,
+                            ctx,
                         )
                     {
                         continue;

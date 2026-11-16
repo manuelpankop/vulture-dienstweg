@@ -110,7 +110,7 @@ pub(crate) fn extract_target_journeys<L: Label>(
     for &(target, walk) in targets {
         for bags in labels.iter().take(transfers + 1).skip(1) {
             for (raw_label, node) in bags[target.idx()].iter_with_node() {
-                if raw_label.arrival() == SecondOfDay::MAX {
+                if raw_label.arrival() == SecondOfDay::MAX || !raw_label.can_finish_at_target(ctx) {
                     continue;
                 }
                 let Some((origin, steps)) =

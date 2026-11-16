@@ -109,12 +109,16 @@ impl<L: Label> LabelBag<L> {
     /// is size 1 and this reduces to one `<=` comparison; for multi-
     /// criterion impls the comparison is Pareto-aware via `Label::dominates`.
     pub(crate) fn dominates_label(&self, candidate: &L) -> bool {
+        self.dominates_label_when(candidate, |_| true)
+    }
+
+    fn dominates_label_when(&self, candidate: &L, eligible: impl Fn(&L) -> bool) -> bool {
         if let (Some(key), Some(index)) = (candidate.dominance_partition(), &self.index) {
             return index.get(&key).is_some_and(|indices| {
-                indices.iter().any(|&i| self.items[i].0.dominates(candidate))
+                indices.iter().any(|&i| eligible(&self.items[i].0) && self.items[i].0.dominates(candidate))
             });
         }
-        self.items.iter().any(|(item, _)| item.dominates(candidate))
+        self.items.iter().any(|(item, _)| eligible(item) && item.dominates(candidate))
     }
 
     pub(crate) fn clear(&mut self) {
@@ -162,8 +166,9 @@ pub(crate) fn insert_into_bag<L: Label>(
     label: L,
     parent_node: Option<usize>,
     step: Step,
+    ctx: &L::Ctx,
 ) -> bool {
-    if all_targets_dominate(best_arrival, targets, &label) {
+    if all_targets_dominate(best_arrival, targets, &label, ctx) {
         return false;
     }
     let added = labels[k][stop.idx()].insert(label);
@@ -187,11 +192,13 @@ pub(crate) fn all_targets_dominate<L: Label>(
     best_arrival: &[LabelBag<L>],
     targets: &[(StopIdx, crate::time::Duration)],
     label: &L,
+    ctx: &L::Ctx,
 ) -> bool {
     !targets.is_empty()
         && targets
             .iter()
-            .all(|&(t, _)| best_arrival[t.idx()].dominates_label(label))
+            .all(|&(t, _)| best_arrival[t.idx()]
+                .dominates_label_when(label, |target| target.can_finish_at_target(ctx)))
 }
 
 #[cfg(test)]

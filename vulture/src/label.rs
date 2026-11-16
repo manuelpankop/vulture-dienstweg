@@ -186,6 +186,16 @@ pub trait Label: Copy + std::fmt::Debug {
         walk_time: Duration,
     ) -> Self;
 
+    /// Whether a footpath may be taken from this label.
+    fn can_take_footpath(&self, _ctx: &Self::Ctx, _from: StopIdx, _to: StopIdx) -> bool {
+        true
+    }
+
+    /// Whether this label is a valid final arrival at a target.
+    fn can_finish_at_target(&self, _ctx: &Self::Ctx) -> bool {
+        true
+    }
+
     /// `self` weakly dominates `other` (every criterion of `self` is
     /// at most the corresponding criterion of `other`). The default
     /// implementation uses [`Label::arrival`], which is correct for
