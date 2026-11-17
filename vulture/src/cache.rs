@@ -126,10 +126,14 @@ impl<L: Label> RaptorCache<L> {
 
         // Resize labels: (transfers + 1) Vecs, each n_stops long, all empty bags.
         let needed = transfers + 1;
-        for v in self.labels.iter_mut() {
-            for b in v.iter_mut() {
-                b.clear();
+        // Every non-empty bag sits at a stop recorded in `ever_reached`
+        // (seeding, route scans and footpaths all set it), so clearing only
+        // those stops resets the cache without touching every cell.
+        for bit in self.ever_reached.ones() {
+            for v in self.labels.iter_mut() {
+                v[bit].clear();
             }
+            self.best_arrival[bit].clear();
         }
         if self.labels.len() < needed {
             self.labels.resize_with(needed, || {
@@ -139,9 +143,6 @@ impl<L: Label> RaptorCache<L> {
             self.labels.truncate(needed);
         }
 
-        for v in &mut self.best_arrival {
-            v.clear();
-        }
 
         self.board_detail.clear();
         self.marked_stops.clear();

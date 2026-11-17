@@ -204,6 +204,18 @@ pub trait Label: Copy + std::fmt::Debug {
         self.arrival() <= other.arrival()
     }
 
+    /// If true, all query targets are alternative stops of one destination
+    /// and must have zero target walk. A label is then pruned as soon as any
+    /// target holds a finishing label that dominates it per
+    /// [`Label::dominates_at_target`]. The default keeps one Pareto front per
+    /// target, which prunes only when every target dominates.
+    const TARGETS_ARE_ALTERNATIVES: bool = false;
+
+    /// Target-pruning comparison used with [`Label::TARGETS_ARE_ALTERNATIVES`].
+    fn dominates_at_target(&self, other: &Self) -> bool {
+        self.dominates(other)
+    }
+
     /// If true, boarding any one particular trip erases all differences
     /// between the boarding labels for subsequent stops on that trip.
     /// This must hold regardless of where the trip was boarded.

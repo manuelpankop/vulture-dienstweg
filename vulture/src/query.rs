@@ -321,12 +321,25 @@ where
 
     /// Execute a descending range query until the callback requests a stop.
     /// The caller must ensure omitted earlier departures cannot affect its result.
-    pub fn run_until(self, mut stop_after: impl FnMut(SecondOfDay, &[Journey<L>]) -> bool) -> Vec<RangeJourney<L>> {
+    pub fn run_until(self, stop_after: impl FnMut(SecondOfDay, &[Journey<L>]) -> bool) -> Vec<RangeJourney<L>> {
         let mut cache = RaptorCache::<L>::for_timetable(self.tt);
+        self.run_until_with_cache(&mut cache, stop_after)
+    }
+
+    /// [`Self::run_until`] reusing `cache`.
+
+    /// # Panics
+    ///
+    /// Panics if `cache` was sized for a different timetable.
+    pub fn run_until_with_cache(
+        self,
+        cache: &mut RaptorCache<L>,
+        mut stop_after: impl FnMut(SecondOfDay, &[Journey<L>]) -> bool,
+    ) -> Vec<RangeJourney<L>> {
         raptor_range_rrap(
             self.tt,
             &self.ctx,
-            &mut cache,
+            cache,
             self.max_transfers.0 as usize,
             &self.mode.departures,
             self.origins,

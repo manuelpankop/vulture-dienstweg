@@ -19,7 +19,9 @@ use crate::time::SecondOfDay;
 /// impls it grows up to 8 inline before spilling.
 #[derive(Debug, Clone)]
 pub(crate) struct LabelBag<L: Label> {
-    items: SmallVec<[(L, Option<usize>); 8]>,
+    // Two inline entries: most bags hold one or two labels, and large
+    // multi-criterion labels would otherwise inflate every cell.
+    items: SmallVec<[(L, Option<usize>); 2]>,
     index: Option<Box<HashMap<u64, SmallVec<[usize; 1]>>>>,
 }
 
@@ -194,6 +196,14 @@ pub(crate) fn all_targets_dominate<L: Label>(
     label: &L,
     ctx: &L::Ctx,
 ) -> bool {
+    if L::TARGETS_ARE_ALTERNATIVES {
+        debug_assert!(targets.iter().all(|&(_, walk)| walk == crate::time::Duration::ZERO));
+        return targets.iter().any(|&(t, _)| {
+            best_arrival[t.idx()].items.iter().any(|(target, _)| {
+                target.can_finish_at_target(ctx) && target.dominates_at_target(label)
+            })
+        });
+    }
     !targets.is_empty()
         && targets
             .iter()
