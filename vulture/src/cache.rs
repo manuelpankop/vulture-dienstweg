@@ -124,8 +124,11 @@ impl<L: Label> RaptorCache<L> {
             self.n_routes, tt_n_routes
         );
 
-        // Resize labels: (transfers + 1) Vecs, each n_stops long, all empty bags.
-        let needed = transfers + 1;
+        // Rounds are allocated on demand by the rounds loop (a query rarely needs
+        // as many as it allows); only round 0 is needed up front. Rounds kept from
+        // earlier queries are reused once cleared.
+        let _ = transfers;
+        let needed = 1;
         // Every non-empty bag sits at a stop recorded in `ever_reached`
         // (seeding, route scans and footpaths all set it), so clearing only
         // those stops resets the cache without touching every cell.
@@ -139,8 +142,6 @@ impl<L: Label> RaptorCache<L> {
             self.labels.resize_with(needed, || {
                 (0..self.n_stops).map(|_| LabelBag::new()).collect()
             });
-        } else {
-            self.labels.truncate(needed);
         }
 
 

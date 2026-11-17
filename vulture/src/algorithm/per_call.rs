@@ -231,7 +231,7 @@ impl<L: Label> RouteBag<L> {
 pub(crate) fn run_raptor_rounds<T: Timetable + ?Sized, L: Label>(
     tt: &T,
     ctx: &L::Ctx,
-    labels: &mut [Vec<LabelBag<L>>],
+    labels: &mut Vec<Vec<LabelBag<L>>>,
     best_arrival: &mut [LabelBag<L>],
     board_detail: &mut BoardingTree,
     marked_stops: &mut FixedBitSet,
@@ -294,6 +294,17 @@ pub(crate) fn run_raptor_rounds<T: Timetable + ?Sized, L: Label>(
     }
 
     for k in 1..=transfers {
+        // No stop improved in the previous round: further rounds cannot find
+        // anything new (RAPTOR's termination rule). This makes a high or
+        // effectively unlimited transfer limit cheap.
+        if marked_stops.is_clear() {
+            break;
+        }
+        // Rounds are allocated when first needed.
+        if labels.len() <= k {
+            let n_stops = labels[0].len();
+            labels.push((0..n_stops).map(|_| LabelBag::new()).collect());
+        }
         #[cfg(feature = "profiling")]
         let started = std::time::Instant::now();
         #[cfg(feature = "profiling")]
