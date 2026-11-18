@@ -156,7 +156,7 @@ all subsequent queries against the same loaded timetable.
 ## Reproduction
 
 ```bash
-# 1. Fetch external feeds (~300 MB, gitignored under aux/external/).
+# 1. Fetch external feeds (~300 MB, gitignored under testdata/external/).
 ./scripts/fetch-bench-feeds.sh
 
 # 2. Run vulture's JSON-emitting harness.
@@ -172,7 +172,7 @@ node harness.mjs > results/raptor-js.json
 node compare.mjs
 ```
 
-The bundled Delhi feed (`aux/dmrc_gtfs.zip`) is exercised even without
+The bundled Delhi feed (`testdata/dmrc_gtfs.zip`) is exercised even without
 step 1; skip step 1 and the other three feeds are reported as missing.
 
 ## Sources and licenses

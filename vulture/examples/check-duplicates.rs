@@ -8,10 +8,10 @@ use std::collections::HashSet;
 
 fn main() -> anyhow::Result<()> {
     for (label, path) in &[
-        ("Delhi", "aux/dmrc_gtfs.zip"),
-        ("Helsinki", "aux/external/helsinki.zip"),
-        ("Berlin", "aux/external/berlin.zip"),
-        ("Paris", "aux/external/paris.zip"),
+        ("Delhi", "testdata/dmrc_gtfs.zip"),
+        ("Helsinki", "testdata/external/helsinki.zip"),
+        ("Berlin", "testdata/external/berlin.zip"),
+        ("Paris", "testdata/external/paris.zip"),
     ] {
         let gtfs = match Gtfs::new(path) {
             Ok(g) => g,

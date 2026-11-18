@@ -6,7 +6,7 @@ use vulture::gtfs::GtfsTimetable;
 use vulture::{Duration, SecondOfDay};
 use vulture::{RaptorCache, RaptorCachePool, Timetable};
 
-const GTFS_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../aux/dmrc_gtfs.zip");
+const GTFS_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../testdata/dmrc_gtfs.zip");
 
 // Departure time: 09:00:00 in seconds since midnight.
 const DEPARTURE_TIME: SecondOfDay = SecondOfDay::hms(9, 0, 0);
@@ -18,7 +18,7 @@ fn service_date() -> Date {
 }
 
 // Query pairs picked to exercise different parts of the algorithm.
-// Stop IDs are GTFS string IDs from aux/dmrc_gtfs.zip (Delhi Metro).
+// Stop IDs are GTFS string IDs from testdata/dmrc_gtfs.zip (Delhi Metro).
 //
 // The Delhi Metro feed has no transfers.txt, so cross-line journeys rely
 // on interchange stations being shared physical stops on multiple routes

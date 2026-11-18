@@ -6,7 +6,7 @@ Rust implementation of [RAPTOR](https://www.microsoft.com/en-us/research/publica
 
 ## Quick start
 
-The `gtfs` adapter implements `Timetable` over a parsed GTFS feed. `aux/dmrc_gtfs.zip` (Delhi Metro) is bundled.
+The `gtfs` adapter implements `Timetable` over a parsed GTFS feed. `testdata/dmrc_gtfs.zip` (Delhi Metro) is bundled.
 
 ```rust
 use gtfs_structures::Gtfs;
@@ -14,7 +14,7 @@ use jiff::civil::date;
 use vulture::{SecondOfDay, Timetable};
 use vulture::gtfs::GtfsTimetable;
 
-let gtfs = Gtfs::new("aux/dmrc_gtfs.zip")?;
+let gtfs = Gtfs::new("testdata/dmrc_gtfs.zip")?;
 let tt = GtfsTimetable::new(&gtfs, date(2024, 1, 15))?;
 
 let start = tt.stop_idx("1").expect("Dilshad Garden");
@@ -33,7 +33,7 @@ for j in &journeys {
 }
 ```
 
-Runnable: `cargo run --example gtfs-timetable -- aux/dmrc_gtfs.zip 2024-01-15 1 44`.
+Runnable: `cargo run --example gtfs-timetable -- testdata/dmrc_gtfs.zip 2024-01-15 1 44`.
 
 Each `Journey` carries `plan: Vec<(RouteIdx, StopIdx)>`, an `origin`, a `target`, and a `label`. `journey.arrival()` returns the `SecondOfDay`. For trip IDs and per-leg times, see [`Journey::with_timing`](https://docs.rs/vulture/latest/vulture/struct.Journey.html#method.with_timing).
 

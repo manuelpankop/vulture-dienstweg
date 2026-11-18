@@ -37,7 +37,7 @@ mkdir -p "$demo_dir/pkg"
 cp -R "$pkg_dir/." "$demo_dir/pkg/"
 
 echo "Copying GTFS feed (Delhi Metro) ..."
-cp "$repo_root/aux/dmrc_gtfs.zip" "$demo_dir/dmrc_gtfs.zip"
+cp "$repo_root/testdata/dmrc_gtfs.zip" "$demo_dir/dmrc_gtfs.zip"
 
 # Wasm size summary so a regression in bundle size is visible.
 wasm_path="$pkg_dir/vulture_wasm_bg.wasm"

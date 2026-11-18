@@ -5,7 +5,7 @@
 
 use gtfs_structures::Gtfs;
 
-const FEED: &str = "aux/external/paris.zip";
+const FEED: &str = "testdata/external/paris.zip";
 
 fn main() -> anyhow::Result<()> {
     let gtfs = Gtfs::new(FEED)?;

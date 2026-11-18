@@ -70,7 +70,7 @@ jobs:
       # clippy --all-targets above) and silent output drift.
       # GTFS-feed-dependent examples (gtfs-timetable, cross-city-bench)
       # are intentionally excluded — they need feeds under
-      # aux/external/ that CI doesn't have.
+      # testdata/external/ that CI doesn't have.
       - run: cargo run --release --example custom_label
       - run: cargo run --release --example fare_aware
       - run: cargo run --release --example range_query

@@ -15,7 +15,7 @@ import { loadGTFS, RaptorAlgorithmFactory } from "raptor-journey-planner";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, "..");
-const FEED = path.join(REPO_ROOT, "aux/external/berlin.zip");
+const FEED = path.join(REPO_ROOT, "testdata/external/berlin.zip");
 const SERVICE_DATE = new Date(2026, 4, 4); // 2026-05-04, local
 const HBF = "de:11000:900003201:1:50";
 const ALEX = "de:11000:900100003:1:50";

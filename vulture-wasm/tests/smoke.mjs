@@ -23,7 +23,7 @@ await init({
     ),
 });
 
-const gtfsBytes = readFileSync(join(repoRoot, "aux", "dmrc_gtfs.zip"));
+const gtfsBytes = readFileSync(join(repoRoot, "testdata", "dmrc_gtfs.zip"));
 
 console.log(`loaded ${gtfsBytes.length} bytes of GTFS zip`);
 

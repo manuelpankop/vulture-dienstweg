@@ -2,11 +2,11 @@
 .hegel/
 
 # Large external GTFS feeds for cross-city benchmarking. The tracked
-# `aux/dmrc_gtfs.zip` (Delhi Metro, ~6 MB) is small enough to bundle for
+# `testdata/dmrc_gtfs.zip` (Delhi Metro, ~6 MB) is small enough to bundle for
 # the proptest harness and the example smoke-test. Other feeds – Paris
 # IDFM, Berlin VBB, etc. – must be downloaded by the user; see
 # docs/benchmarks.md and scripts/fetch-bench-feeds.sh.
-/aux/external/
+/testdata/external/
 
 # Node deps for the cross-implementation comparison harness. The
 # checked-in package.json + harness.mjs are reproducible; node_modules
@@ -16,7 +16,7 @@
 /vulture-bench-js/package-lock.json
 
 # vulture-wasm demo build outputs. The wasm + JS bindings come from
-# wasm-pack and the GTFS zip is copied from `aux/` — both produced by
+# wasm-pack and the GTFS zip is copied from `testdata/` — both produced by
 # `scripts/build-demo.sh` and the GitHub Pages workflow.
 /docs/demo/pkg/
 /docs/demo/dmrc_gtfs.zip

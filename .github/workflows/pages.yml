@@ -7,7 +7,7 @@ on:
       - 'vulture/**'
       - 'vulture-wasm/**'
       - 'docs/demo/**'
-      - 'aux/dmrc_gtfs.zip'
+      - 'testdata/dmrc_gtfs.zip'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/pages.yml'

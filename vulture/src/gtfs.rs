@@ -2315,7 +2315,7 @@ mod tests {
         use gtfs_structures::Gtfs;
         use jiff::civil::date;
 
-        let gtfs = Gtfs::new("../aux/dmrc_gtfs.zip").expect("Delhi GTFS loads");
+        let gtfs = Gtfs::new("../testdata/dmrc_gtfs.zip").expect("Delhi GTFS loads");
         let tt = GtfsTimetable::new(&gtfs, date(2024, 1, 15)).expect("timetable builds");
 
         let (trip_id, trip) = gtfs
@@ -2345,7 +2345,7 @@ mod tests {
         use gtfs_structures::Gtfs;
         use jiff::civil::date;
 
-        let gtfs = Gtfs::new("../aux/dmrc_gtfs.zip").unwrap();
+        let gtfs = Gtfs::new("../testdata/dmrc_gtfs.zip").unwrap();
         let tt = GtfsTimetable::new(&gtfs, date(2024, 1, 15)).unwrap();
 
         let some_stop = tt.stop_idx("1").expect("Dilshad Garden");

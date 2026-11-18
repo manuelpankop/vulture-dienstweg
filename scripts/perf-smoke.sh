@@ -20,7 +20,7 @@
 # past noise. The first run on a fresh checkout will report no prior
 # baseline; run it twice to start the comparison stream.
 #
-# Only data required is the bundled `aux/dmrc_gtfs.zip` (Delhi Metro);
+# Only data required is the bundled `testdata/dmrc_gtfs.zip` (Delhi Metro);
 # no external feed downloads.
 #
 # Extra arguments are forwarded to criterion, so e.g.

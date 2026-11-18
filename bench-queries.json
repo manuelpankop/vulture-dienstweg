@@ -8,7 +8,7 @@
   "feeds": [
     {
       "name": "Delhi Metro",
-      "path": "aux/dmrc_gtfs.zip",
+      "path": "testdata/dmrc_gtfs.zip",
       "service_date": "2024-01-15",
       "walking_footpaths_m": null,
       "queries": [
@@ -31,7 +31,7 @@
     },
     {
       "name": "Helsinki HSL",
-      "path": "aux/external/helsinki.zip",
+      "path": "testdata/external/helsinki.zip",
       "service_date": "2026-05-04",
       "walking_footpaths_m": 500.0,
       "queries": [
@@ -44,7 +44,7 @@
     },
     {
       "name": "Berlin VBB",
-      "path": "aux/external/berlin.zip",
+      "path": "testdata/external/berlin.zip",
       "service_date": "2026-05-04",
       "walking_footpaths_m": null,
       "queries": [
@@ -57,7 +57,7 @@
     },
     {
       "name": "Paris IDFM",
-      "path": "aux/external/paris.zip",
+      "path": "testdata/external/paris.zip",
       "service_date": "2026-05-04",
       "walking_footpaths_m": null,
       "queries": [

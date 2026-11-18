@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fetch GTFS feeds used by the cross-city benchmark example into
-# `aux/external/`. The directory is gitignored.
+# `testdata/external/`. The directory is gitignored.
 #
 # Each feed is downloaded once and reused; rerun this script to refresh
 # the snapshot. Total download is ~300 MB at the time of writing.
@@ -19,7 +19,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-mkdir -p aux/external
+mkdir -p testdata/external
 
 declare -a FEEDS=(
     "helsinki|http://dev.hsl.fi/gtfs/hsl.zip"
@@ -30,7 +30,7 @@ declare -a FEEDS=(
 for entry in "${FEEDS[@]}"; do
     name="${entry%%|*}"
     url="${entry#*|}"
-    target="aux/external/${name}.zip"
+    target="testdata/external/${name}.zip"
     if [[ -f "$target" ]]; then
         echo "skip $name (already at $target)"
         continue

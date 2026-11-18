@@ -39,7 +39,7 @@ Departure 09:00 (32400 s since midnight); 10 max transfers; warm
 `RaptorCache::for_timetable(&tt)` reused across every iteration. Median
 of 50 measurements per query.
 
-### Delhi Metro (`aux/dmrc_gtfs.zip`)
+### Delhi Metro (`testdata/dmrc_gtfs.zip`)
 
 Bundled in the repo. 262 stops, 36 routes. No `transfers.txt`, so all
 multi-leg journeys use shared physical interchange stops.
@@ -224,21 +224,21 @@ soundness item with the largest blast radius.
 ## Reproduction
 
 ```bash
-# 1. Fetch the external feeds (~300 MB, gitignored under aux/external/).
+# 1. Fetch the external feeds (~300 MB, gitignored under testdata/external/).
 ./scripts/fetch-bench-feeds.sh
 
 # 2. Run the cross-city benchmark example.
 cargo run --release --example cross-city-bench
 ```
 
-The bundled Delhi feed (`aux/dmrc_gtfs.zip`, 1.1 MB, tracked in the
+The bundled Delhi feed (`testdata/dmrc_gtfs.zip`, 1.1 MB, tracked in the
 repo) is exercised even without step 1.
 
 ## Sources and licenses
 
 | Feed         | Source                                                                                                    | License                                       |
 |--------------|-----------------------------------------------------------------------------------------------------------|-----------------------------------------------|
-| Delhi Metro  | bundled `aux/dmrc_gtfs.zip` (snapshot)                                                                    | bundled with repo                             |
+| Delhi Metro  | bundled `testdata/dmrc_gtfs.zip` (snapshot)                                                                    | bundled with repo                             |
 | Helsinki HSL | [`http://dev.hsl.fi/gtfs/hsl.zip`](http://dev.hsl.fi/gtfs/hsl.zip)                                        | CC-BY 4.0 – © HSL / Helsingin seudun liikenne |
 | Berlin VBB   | [`https://www.vbb.de/vbbgtfs`](https://www.vbb.de/vbbgtfs)                                                | CC-BY 3.0 DE – © Verkehrsverbund Berlin-Brandenburg |
 | Paris IDFM   | [`https://eu.ftp.opendatasoft.com/stif/GTFS/IDFM-gtfs.zip`](https://eu.ftp.opendatasoft.com/stif/GTFS/IDFM-gtfs.zip) | Licence Mobilités – © Île-de-France Mobilités |

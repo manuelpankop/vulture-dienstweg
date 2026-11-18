@@ -15,7 +15,7 @@ use std::hint::black_box;
 use vulture::gtfs::GtfsTimetable;
 use vulture::{Duration, RaptorCache, SecondOfDay, Timetable};
 
-const GTFS_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../aux/dmrc_gtfs.zip");
+const GTFS_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../testdata/dmrc_gtfs.zip");
 const DEPARTURE: SecondOfDay = SecondOfDay::hms(9, 0, 0);
 const ITERS: usize = 200_000;
 

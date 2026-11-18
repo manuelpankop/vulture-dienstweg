@@ -1,7 +1,7 @@
 //! Cross-city benchmark across multiple GTFS feeds.
 //!
-//! Looks for feeds in `aux/external/{helsinki,berlin,paris}.zip` and the
-//! tracked `aux/dmrc_gtfs.zip`. For each feed found, loads it, runs three
+//! Looks for feeds in `testdata/external/{helsinki,berlin,paris}.zip` and the
+//! tracked `testdata/dmrc_gtfs.zip`. For each feed found, loads it, runs three
 //! representative queries, and reports load time, query latency
 //! (median of 50 runs), and journey arrival time.
 //!
@@ -56,7 +56,7 @@ fn feeds() -> Vec<FeedSpec> {
     vec![
         FeedSpec {
             name: "Delhi Metro",
-            path: "aux/dmrc_gtfs.zip",
+            path: "testdata/dmrc_gtfs.zip",
             service_date: date(2024, 1, 15), // a Monday in the Delhi calendar window
             walking_footpaths_m: None,
             queries: &[
@@ -79,7 +79,7 @@ fn feeds() -> Vec<FeedSpec> {
         },
         FeedSpec {
             name: "Helsinki HSL",
-            path: "aux/external/helsinki.zip",
+            path: "testdata/external/helsinki.zip",
             service_date: date(2026, 5, 4),
             walking_footpaths_m: Some(500.0),
             queries: &[
@@ -97,7 +97,7 @@ fn feeds() -> Vec<FeedSpec> {
         },
         FeedSpec {
             name: "Berlin VBB",
-            path: "aux/external/berlin.zip",
+            path: "testdata/external/berlin.zip",
             service_date: date(2026, 5, 4),
             walking_footpaths_m: None,
             queries: &[
@@ -123,7 +123,7 @@ fn feeds() -> Vec<FeedSpec> {
         },
         FeedSpec {
             name: "Paris IDFM",
-            path: "aux/external/paris.zip",
+            path: "testdata/external/paris.zip",
             service_date: date(2026, 5, 4),
             walking_footpaths_m: None,
             queries: &[
